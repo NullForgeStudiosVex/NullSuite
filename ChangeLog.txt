@@ -1,0 +1,152 @@
+Changelog!
+-------------------------------------------------------------
+4.4 Git Deez Nutz
+So. Evidently some people don't update repo's, but instead update releases. soooo. i added support for release checks/downloads.
+Itll get the Release...ask you which parts of it you want to download. create a release based on the OS/file or whatever. have a download progress popup with Eta. and you can cancel and other cool things.
+it also checks the release for updates too. so thats nice. it also merges the folders instead of deleting them. so be careful.
+UHH
+Also removed open repo in browser and local from manage becuase why the fuck was it in manage, vex???
+now its on the main page, and you can view it in local or browser from main.
+also fixed a bit of weird things here and there. UH
+Null Cursor now doesn't lock you out of profiles/monitor setups. because why? you don't need cursor teleportation to switch monitor setups. I was dumb lol.
+ANYWAYS all works now as far as i know. inb4 its broken as hell. 
+
+-------------------------------------------------------------
+4.3 Whoops
+Hey you know when you used to save a piece of UI in the save file, and then you told it not too, but not anywhere else? yeah that broke things.
+fixed iiiiiiiit. 
+
+-------------------------------------------------------------
+4.2 Major Needed Fixes and Improvements.
+
+UHHH i fixed the scrolling again....for NullWire. stupid frames. BUTITWORKS \o/
+I added a Mute button. incase yaknow. ya just wanna heccin mute it for a sec without setting your vol to 0 and then back to what it was. Handy 👍
+Added a loading popup so the data can full load, UI can generate, and you can have a spare second to suck it :)
+Fixed a massive issue with Nullsuite because i used a damn variable as a placeholder instead of Getting it...thus corrupting the .json because YOU CAN'T STORE UI IN A SAVE FILE.
+and idk what else.
+OH YEAH. i fixed the title. no longer says "NullTest" 🤣 forgot to change that after merging everything.
+Probably other things too idk.
+
+-------------------------------------------------------------
+4.1 IDK?
+
+Fixed the Icon in the installer, and added kill launcher when you quit via tray.
+
+-------------------------------------------------------------
+4.0 NullGit Finished!....?
+I hated all the Git managers out there 😒 it was all graphics and scales, and react dumbshit no one in their right mind developing needs.
+simple push/puller with auth please.
+now its done...
+
+next i guess i tackle dark mode again since its all unified.
+..i'll write that later. 
+
+
+-------------------------------------------------------------
+3.0 QOL things.
+WHOLY UNIFICATION BATMAN.
+
+It's all just one app now :V no more bullshit.
+
+-------------------------------------------------------------
+2.0 QOL things.
+Added dark mode to all apps cause FUCK MY EYEBALLS MAN. GOD
+
+-------------------------------------------------------------
+1.8 QOL things.
+NullWire - Fixed audio not being overriden in audio and input devices
+Nullwire - fixed input devices not generating (i forgot to write a thing :D duh)
+Nullwire - capped all sliders at 100 for audio and input because evidently pactl can't set that but linux UI can ¯\_(ツ)_/¯ if it CAN work i sure as hell don't know how.
+if you NEED something ot be >100% volume. >create a wire - have this go to mains.
+>Have that wire go into ANOTHER wire. attach only that audio device to it. ??? profit?
+
+
+-------------------------------------------------------------
+1.7 QOL things.
+NullRip - Changed standard format to mkv which supports multiple audio and subtitles and other things.
+NullRip - Changed quality standard to hard 20 instead of fluctuating.
+NullSuite - Added launching/showing of apps from tray.
+NullMidi - Fixed saving/loading issue. (never told it to create if it didn't exist. whoops)
+Install - Added wmctrl requirement for new tray handling.
+Install - Added a notification of how much storage space is required to install all dependencies.
+
+-------------------------------------------------------------
+1.6 MOAR FIXES
+Fixed QuickNullProton launch error. i increased nullproton to run on default, a, or b. and didn't fix the config to LOAD that 🤦
+FIxed VLC chapter opening issue.
+Fixed nullrip .desktop issue. Evidently launching it from my debugger is completely different from launching it via .desktop. Fixed the OS get user name issue from that.
+Other things. idfk. 
+
+-------------------------------------------------------------
+1.5 Some Fixes...
+Renaming the launcher to NSLauncher created a slight...never closing problem. lmao whoops.
+... Also forgot to load the config BEFORE generating UI. fixed that.
+Also moved a root process before loop so it actually yaknow...runs.
+I should stop coding when I'm tired. 
+butalas. bugfixes. 
+
+-------------------------------------------------------------
+1.4 NullRip is "done"!?
+Yeah… this wasn’t supposed to be a whole thing.
+But here we are.
+
+NullRip is now a complete DVD ripping + preview tool.
+
+Features:
+- Scan discs using HandBrakeCLI
+- View titles, chapters, audio, and subtitle tracks
+- Select exactly what you want to rip
+- Per-chapter selection + toggle all
+- Live progress + ETA during ripping
+- Auto-open output folder on completion
+- ▶ Chapter Preview (VLC integration)
+  Click a chapter > opens VLC > jumps directly to that chapter on the disc
+  No temp files, no guessing, no hacks
+
+Notes:
+- VLC required for preview (apt or flatpak supported)
+- Uses direct DVD access for accurate playback
+
+Honestly? This thing is kinda cracked now.
+
+SADLY no blu-ray support becuase of 2 things.
+1. most importantly: i don't have a portable blueray player ¯\_(ツ)_/¯
+2. encryption. but that's never stopped me before. 1 is the bottleneck.
+OHWELL future things. 
+
+-------------------------------------------------------------
+1.3 NullProton Update
+
+WOOH. Didn't think I'd get there that soon but.
+NOW:
+Null proton comes with THREE ways to launch a program via Proton.
+using Default proton (which is what runs your quick proton launch)
+Proton A - whatever you set that too, and
+Proton B - whatever you set THAT too
+incase you want to run GE or 9 or 10 or whatever you're doing.
+
+ALSO added Close NullProton on launch, and Minimize on launch.
+ALSO ALSO added button colorization for the last one you launched, so you can tell which version worked for you best :)
+ALSO ALSO ALSO added a basic Linux Launcher 🤨 so you don't have to run around your system with linux native games you want to launch i guess? IDK.
+ENJOY!
+
+
+-------------------------------------------------------------
+1.2 QOL Update
+Instead of locking the NullSuite.sh to the point where running it a 2nd time just makes it shut down.
+I instead let it recall the program.
+
+SO if you're in a full screen game, and you hit the Windows/Power key?
+You can't left/right click on the panel to >Show Nullsuite. Thats fuckin annoying.
+
+SO. If you hit Windows/Power and then search up NullSuite, and start it up again?
+If its already started. It will then SHOW the program (with a small delay to overpower fullscreen games).
+
+-------------------------------------------------------------
+1.1 Bug fix
+Idk what I fixed honestly. I sent it out too fast too remember.
+also made the programs have colorful borders \o/
+
+-------------------------------------------------------------
+1.0 Initial release
+:D it's done, and it's a fuckin mess!
