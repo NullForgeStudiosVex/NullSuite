@@ -1,5 +1,13 @@
 Changelog!
 -------------------------------------------------------------
+4.5 QOL fix - NULLMIDI DISABLED
+Updated how the program starts up for quicker start times, and listed those start times for you to see.
+Fixed some things with Nullgit new branches...and used it.
+with new branches. told the gitupdater to only attempt to update the MAIN branch. so you dont download my bad buggy WIP's
+Fixed a massive saving error. Fucking race time conditions.
+Did a bunch of shit i don't even remember so yeah thats cool. 
+
+-------------------------------------------------------------
 4.4 Git Deez Nutz
 So. Evidently some people don't update repo's, but instead update releases. soooo. i added support for release checks/downloads.
 Itll get the Release...ask you which parts of it you want to download. create a release based on the OS/file or whatever. have a download progress popup with Eta. and you can cancel and other cool things.

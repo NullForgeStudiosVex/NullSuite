@@ -26,7 +26,7 @@ import pygame
 # Startup :)
 # ==========================================================================================
 SystemLoading = True
-StartupDelay = 3 #if you're looking at this thinking "wtf why a delay?" because tkinter runs on 1 thread...trying to make it load everything, and generate UI, and fill the UI all in 1ms is....bad. so. delay. you wont notice 3ms yo.
+StartUpDelay = 100 #if you're looking at this thinking "wtf why a delay?" because tkinter runs on 1 thread...trying to make it load everything, and generate UI, and fill the UI all in 1ms is....bad. so. delay. you wont notice it.
 Root = tk.Tk()
 Root.title("NullSuite")
 Root.geometry("1600x900")
@@ -72,6 +72,10 @@ Python = os.path.join(BaseDir, "venv", "bin", "python3")
 NWPath = os.path.join(BaseDir, "NW.sh") 
 IconImage = tk.PhotoImage(file=IconPath)
 Root.iconphoto(True, IconImage)
+LoadTimes = {}
+LoadCompleted = 0
+ProgramCount = 0
+StartUpTimeString = tk.StringVar(value="")
 # ------------------------------
 # NullProton
 # ------------------------------
@@ -280,7 +284,7 @@ def GetSavableMidiRows():
     return SaveRows
 
 def LoadConfig():
-    global StartupDelay # to control delay
+    global StartUpDelay, ProgramCount # to control delay
     global Profiles, ActiveProfile, ScanForMouse #NullWire
     global Devices, Sinks #NullWire
     global ProtonGames #NullProton
@@ -305,15 +309,15 @@ def LoadConfig():
         midi = data.get("NullMidi", {})
         repos = data.get("NullGit", {})
 
+        ProgramCount = 5
         
         # ==============================
         # NullWire
-        # ==============================.
+        # ==============================
         print("Loading NullWire")
-        StartupDelay += 3
 
         def LoadNullWire():
-            global Sinks, Devices
+            global Sinks, Devices, LoadCompleted
             Sinks.clear()
             Sinks.update(wire.get("Sinks", {}))
 
@@ -340,16 +344,19 @@ def LoadConfig():
             NullWireRebuildUI()
             RefreshRoutingUI()
 
-        Root.after(StartupDelay, LoadNullWire)
+            LoadCompleted += 1
+
+        Root.after(StartUpDelay, LoadNullWire)
+
+
         
         # ==============================
         # NullCursor
         # ==============================
         print("Loading NullCursor")
-        StartupDelay += 3
 
         def LoadNullCursor():
-            global ActiveProfile, ScanForMouse
+            global ActiveProfile, ScanForMouse,LoadCompleted
             Profiles.clear()
             Profiles.update(cursor.get("Profiles", {}))
             ActiveProfile = cursor.get("ActiveProfile")
@@ -364,43 +371,45 @@ def LoadConfig():
             BuildUIFromProfiles()
             NullCursorEnabledVar.set(ScanForMouse)
             ToggleNullCursor()
+            LoadCompleted += 1
 
-        Root.after(StartupDelay, LoadNullCursor)
+        Root.after(StartUpDelay + 10, LoadNullCursor)
 
 
         # ==============================
         # NullMidi
         # ==============================
         print("Loading NullMidi")
-        StartupDelay += 3
 
         def LoadNullMidi():
+            global LoadCompleted
             for row in midi.get("MidiRows", []):
                 AddMidiRow(row, True)
+            LoadCompleted+=1
 
-        Root.after(StartupDelay, LoadNullMidi)
+        Root.after(StartUpDelay + 20, LoadNullMidi)
 
         # ==============================
         # NullGit
         # ==============================
         print("Loading NullGit")
-        StartupDelay += 3
 
         def LoadNullGit():
-            global Repos
+            global Repos, LoadCompleted
             Repos = repos.get("Repos", {})
             BuildRepoList()
+            LoadCompleted +=1
 
-        Root.after(StartupDelay, LoadNullGit)
+        Root.after(StartUpDelay + 30, LoadNullGit)
 
         # ==============================
         # NullProton
         # ==============================
         print("Loading NullProton")
-        StartupDelay += 3
 
 
         def LoadNullProton():
+            global LoadCompleted
             ProtonVars["Default"].set(proton.get("Default", "[ not set ]"))
             ProtonVars["A"].set(proton.get("A", "[ not set ]"))
             ProtonVars["B"].set(proton.get("B", "[ not set ]"))
@@ -410,10 +419,9 @@ def LoadConfig():
 
             for Game in ProtonGames.copy():
                 AddGameRow(Game, True)
+            LoadCompleted+=1
 
-        Root.after(StartupDelay, LoadNullProton)
-        
-        StartupDelay += 3
+        Root.after(StartUpDelay + 40, LoadNullProton)
         return True
 
     except Exception as e:
@@ -421,8 +429,11 @@ def LoadConfig():
         return False
 
 def SaveConfig():
-    if SystemLoading:
+    if LoadCompleted != ProgramCount:
+        print("Attempted to save while loading")
         return
+    
+    print("Saved")
     
     
     data = {
@@ -474,6 +485,17 @@ def SaveConfig():
     except Exception as e:
         print("SaveConfig failed:", e)
 
+def GetCurrentUpdateBranch():
+    RepoRoot = GetRepoRoot()
+
+    try:
+        return subprocess.check_output(
+            ["git", "-C", RepoRoot, "branch", "--show-current"],
+            text=True
+        ).strip()
+    except:
+        return None
+
 def RunUpdateCheck():
     global UpdatePromptShown
 
@@ -481,6 +503,9 @@ def RunUpdateCheck():
         return
     
     if not IsGitInstall():
+        return
+    
+    if GetCurrentUpdateBranch() != "main":
         return
 
     if not UpdateAvailable():
@@ -2942,17 +2967,17 @@ def FinishRip():
 # ------------------------------ 
 # Key Handling 
 # ------------------------------
-def BuildDevice():
+def BuildDevice(Target, Field):
     global UInputDevice
     Keys = set()
-
-    for Row in MidiRows:
-        for Key in Row["Key"]:
-            Candidate = f"KEY_{Key.upper()}"
-            if hasattr(uinput, Candidate):
-                Keys.add(getattr(uinput, Candidate))
+    for Key in Target.get(Field) or []:
+        Candidate = f"KEY_{Key.upper()}"
+        if hasattr(uinput, Candidate):
+            Keys.add(getattr(uinput, Candidate))
 
     if Keys:
+        if UInputDevice:
+            UInputDevice.destroy()
         UInputDevice = uinput.Device(list(Keys))
 
 def PressKeyCombo(Keys):
@@ -3123,7 +3148,7 @@ def DetectKey(Button, Target, Field, Timeout=5):
                     )
                 )
 
-                BuildDevice()
+                BuildDevice(Target,Field)
 
                 SaveConfig()
 
@@ -3150,7 +3175,7 @@ def DetectKey(Button, Target, Field, Timeout=5):
                 )
             )
 
-            BuildDevice()
+            BuildDevice(Target,Field)
 
             SaveConfig()
 
@@ -3412,8 +3437,9 @@ def SearchForSoundFile(Drum, var):
         SaveConfig()
 
 def AddMidiRow(Row=None, Loading=False):
+    global MidiRows
     Frame = tk.Frame(MidiContainer, bd=2, relief="solid")
-    Frame.pack(fill="x", padx=5, pady=5)
+    Frame.pack(fill="both", expand=True, padx=5, pady=5)
     Frame.columnconfigure(0, weight=1)
     Frame.rowconfigure(0, weight=1)
 
@@ -3449,8 +3475,9 @@ def AddMidiRow(Row=None, Loading=False):
     BasicTopRow.columnconfigure(0, weight=0)
     BasicTopRow.columnconfigure(1, weight=0)
     BasicTopRow.columnconfigure(2, weight=0)
-    BasicTopRow.columnconfigure(3, weight=2)
-    BasicTopRow.columnconfigure(4, weight=1)
+    BasicTopRow.columnconfigure(3, weight=0)
+    BasicTopRow.columnconfigure(4, weight=2)
+    BasicTopRow.columnconfigure(5, weight=0)
     BasicTopRow.rowconfigure(0, weight=0)
     
     ControllerRow = tk.Frame(Frame)
@@ -3458,10 +3485,10 @@ def AddMidiRow(Row=None, Loading=False):
     ControllerRow.pack_forget()
 
     DrumRow = tk.Frame(Frame)
-    DrumRow.pack(fill="x", padx=5, pady=5)
+    DrumRow.pack(fill="both", expand=True, padx=5, pady=5)
     DrumRow.columnconfigure(0, weight=1)
     DrumRow.rowconfigure(0,weight=0)
-    DrumRow.rowconfigure(1,weight=0)
+    DrumRow.rowconfigure(1,weight=1, minsize=700)
     DrumRow.pack_forget()
 
     KeyboardRow = tk.Frame(Frame)
@@ -3474,6 +3501,7 @@ def AddMidiRow(Row=None, Loading=False):
     BasicKeyboardVar = tk.BooleanVar(value=True)
 
     ActiveMidiDevice = tk.BooleanVar(value=Row.get("Active", False))
+    MuteMidiDevice = tk.BooleanVar(value=Row.get("Mute", False))
     
     def HideBasictopRow():
         BasicControllerVar.set(True)
@@ -3483,10 +3511,17 @@ def AddMidiRow(Row=None, Loading=False):
         Row['Drums'] = False
         Row['Keyboard'] = False
         BasicTopRow.pack_forget()
+        ControllerRow.pack_forget()
+        DrumRow.pack_forget()
+        KeyboardRow.pack_forget()
         TogglesRow.pack(fill="x", padx=5, pady=5)
 
     def UpdateActiveState():
         Row["Active"] = ActiveMidiDevice.get()
+        SaveConfig()
+
+    def UpdateActiveState():
+        Row["Mute"] = MuteMidiDevice.get()
         SaveConfig()
 
 
@@ -3500,10 +3535,14 @@ def AddMidiRow(Row=None, Loading=False):
     BasicTopRowKeyboardToggle.grid(row=0, column=0, sticky="ew", padx=2)
     BasicTopRowKeyboardToggle.grid_remove()
 
-    ttk.Separator(BasicTopRow, orient="vertical").grid(row=0, column=1, sticky="ns")
+    Divider = tk.Frame(BasicTopRow,width=2,bg="#555")
+    Divider.grid(row=0,column=1,sticky="news",padx=5)
 
     BasicTopRowActiveMidi = tk.Checkbutton(BasicTopRow,variable=ActiveMidiDevice, text="Active?", command=lambda: UpdateActiveState())
     BasicTopRowActiveMidi.grid(row=0, column=2, sticky="ew", padx=2)
+
+    BasicTopRowMuteMidi = tk.Checkbutton(BasicTopRow,variable=MuteMidiDevice, text="Mute", command=lambda: UpdateActiveState())
+    BasicTopRowMuteMidi.grid(row=0, column=3, sticky="ew", padx=2)
 
     def UpdateMidiDevice(Event=None):
         Row["Device"] = MidiDeviceVar.get()
@@ -3511,11 +3550,11 @@ def AddMidiRow(Row=None, Loading=False):
 
     MidiDeviceVar = tk.StringVar(value=Row.get("MidiDevice", ""))
     BasicTopRowMidiDeviceDropDown = ttk.Combobox(BasicTopRow, textvariable=MidiDeviceVar, state="readonly",values=GetPorts())
-    BasicTopRowMidiDeviceDropDown.grid(row=0, column=3, sticky="ew", padx=2)
+    BasicTopRowMidiDeviceDropDown.grid(row=0, column=4, sticky="ew", padx=2)
     BasicTopRowMidiDeviceDropDown.bind("<<ComboboxSelected>>",UpdateMidiDevice)
 
-    BasicTopRowDelete = tk.Button(BasicTopRow, text="Delete Row", command=lambda:RemoveMidiRow(Frame, Row))
-    BasicTopRowDelete.grid(row=0, column=4, sticky="ew", padx=2)
+    BasicTopRowDelete = tk.Button(BasicTopRow, text="Delete Row", command=lambda:RemoveMidiRow(Frame, Row), width = 15)
+    BasicTopRowDelete.grid(row=0, column=5, sticky="ew", padx=2)
 
     BasicTopRow.pack_forget()
 
@@ -3539,7 +3578,7 @@ def AddMidiRow(Row=None, Loading=False):
             BasicTopRowControllerToggle.grid()
         elif Which == "Drums":
             Row['Drums'] = True
-            DrumRow.pack(fill="x", padx=5, pady=5)
+            DrumRow.pack(fill="both", expand=True, padx=5, pady=5)
             BasicTopRowDrumToggle.grid()
         elif Which == "Keyboard":
             Row['Keyboard'] = True
@@ -3567,10 +3606,11 @@ def AddMidiRow(Row=None, Loading=False):
 
     def AddDrumToList(Drum=None, Loading=False):
         MainDrumFrame = tk.Frame(DrumList.Inner, bd=2, relief="solid")
-        MainDrumFrame.pack(fill="x", padx=5, pady=5)
+        MainDrumFrame.pack(fill="both", expand=True, padx=5, pady=5)
 
         MainDrumFrame.columnconfigure(0, weight=1)
         MainDrumFrame.rowconfigure(0, weight=1)
+        
 
         if Drum is None:
             Drum = {}
@@ -3600,9 +3640,9 @@ def AddMidiRow(Row=None, Loading=False):
             Drum['RimMidInput'] = None
             Drum['BellMidInput'] = None
 
-            Drum['CenterKeyOutput'] = None
-            Drum['RimKeyOutput'] = None
-            Drum['BellKeyOutput'] = None
+            Drum['CenterKeyOutput'] = []
+            Drum['RimKeyOutput'] = []
+            Drum['BellKeyOutput'] = []
             
             Drum['CenterSoundFilePath'] = None
             Drum['RimSoundFilePath'] = None
@@ -3625,7 +3665,7 @@ def AddMidiRow(Row=None, Loading=False):
             Drum['HiHatStompVolume'] = 0
             Drum['HiHatBellOpenVolume'] = 0
             Drum['HiHatBellCloseVolume'] = 0
-
+            Row['DrumList'].append(Drum)
 
 
         DrumRowDrumVar = tk.BooleanVar(value=Drum.get("Drum", False))
@@ -3658,8 +3698,14 @@ def AddMidiRow(Row=None, Loading=False):
         DrumRowHihatRow.grid(row=0, column=0, sticky="ew", padx=2)
         DrumRowHihatRow.grid_forget()
 
+        DrumRowCymbalRowVar = tk.BooleanVar(value=True)
+        DrumRowKickRowVar = tk.BooleanVar(value=True)
+        DrumRowHiHatRowVar = tk.BooleanVar(value=True)
+        DrumRowDrumRowVar = tk.BooleanVar(value=True)
+
         def RemoveDrum(Drum):
-            Drum = {}
+            Row["DrumList"].remove(Drum)
+            MainDrumFrame.destroy()
             SaveConfig()
 
         def SwitchDrumType(Which):
@@ -3676,13 +3722,8 @@ def AddMidiRow(Row=None, Loading=False):
             DrumRowCymbalVar.set(False)
             DrumRowKickVar.set(False)
             DrumRowHihatVar.set(False)
-            DrumRowDrumRowVar = True
-            DrumRowCymbalVar = True
-            DrumRowKickVar = True
-            DrumRowHihatVar = True
 
-            if Which == "Drum":
-                print("it's firing lol")
+            if Which == "Pad":
                 DrumRowDrumRow.grid(row=0, column=0, sticky="ew", padx=2)
                 DrumRowDrumRow.columnconfigure(0, weight=1)
                 DrumRowDrumRow.rowconfigure(0, weight=1)
@@ -3707,6 +3748,8 @@ def AddMidiRow(Row=None, Loading=False):
 
             def UpdateChannel(*args):
                 Drum['Channel1'] = Channel1.get()
+                Drum['Channel2'] = Channel2.get()
+                Drum['Channel3'] = Channel3.get()
                 SaveConfig()
 
             Channel1 = tk.IntVar(value=Drum['Channel1'])
@@ -3718,9 +3761,6 @@ def AddMidiRow(Row=None, Loading=False):
             Channel3.trace_add("write", UpdateChannel)
 
             #--- Drums. Basic Drum Row
-            
-            DrumRowDrumRowVar = tk.BooleanVar(value=True)
-
             #------ TopRow
             DrumRowTopRow = tk.Frame(DrumRowDrumRow)
             DrumRowTopRow.grid(row=0, column=0, sticky="ew", padx=2)
@@ -3730,65 +3770,76 @@ def AddMidiRow(Row=None, Loading=False):
             DrumRowTopRow.columnconfigure(2, weight=0 )
             DrumRowTopRow.columnconfigure(3, weight=0 )
             DrumRowTopRow.columnconfigure(4, weight=0 )
+            DrumRowTopRow.columnconfigure(5, weight=0 )
+            DrumRowTopRow.columnconfigure(6, weight=0 )
             DrumRowTopRow.rowconfigure(0, weight=0 )
 
-            DrumRowDrumToMainToggle = tk.Checkbutton(DrumRowTopRow, text="Drum?", variable=DrumRowDrumRowVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowDrumToMainToggle = tk.Checkbutton(DrumRowTopRow, text="Pad?", variable=DrumRowDrumRowVar, command=lambda:SwitchDrumType("Main"))
             DrumRowDrumToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
 
+            Divider = tk.Frame(DrumRowTopRow,width=2,bg="#555")
+            Divider.grid(row=0,column=1,sticky="ns",padx=5)
+
             DrumRowChannelsLabel= tk.Label(DrumRowTopRow, text="Channels:")
-            DrumRowChannelsLabel.grid(row=0, column=1, sticky="ew", padx=2)
+            DrumRowChannelsLabel.grid(row=0, column=2, sticky="ew", padx=2)
 
             DrumRowDrumChannel1 = ttk.Combobox(DrumRowTopRow, textvariable=Channel1, state="readonly",values=channels)
-            DrumRowDrumChannel1.grid(row=0, column=2, padx=2)
+            DrumRowDrumChannel1.grid(row=0, column=3, padx=2)
             DrumRowDrumChannel2 = ttk.Combobox(DrumRowTopRow, textvariable=Channel2, state="readonly",values=channels)
-            DrumRowDrumChannel2.grid(row=0, column=3, padx=2)
+            DrumRowDrumChannel2.grid(row=0, column=4, padx=2)
             DrumRowDrumChannel3 = ttk.Combobox(DrumRowTopRow, textvariable=Channel3, state="readonly",values=channels)
-            DrumRowDrumChannel3.grid(row=0, column=4, padx=2)
+            DrumRowDrumChannel3.grid(row=0, column=5, padx=2)
 
-            RemoveDrumObjectFromList= tk.Button(DrumRowTopRow, text="Remove Drum?", command=lambda:RemoveDrum(Drum))
-            RemoveDrumObjectFromList.grid(row=0, column=5, sticky="ew", padx=2)
+            RemoveDrumObjectFromList= tk.Button(DrumRowTopRow, text="Remove Pad?", command=lambda:RemoveDrum(Drum))
+            RemoveDrumObjectFromList.grid(row=0, column=6, sticky="ew", padx=2)
             #------------ CenterRow
             DrumRowCenterPad = tk.Frame(DrumRowDrumRow, bd=2, relief="solid")
-            DrumRowCenterPad.grid(row=1, column=0, sticky="ew", padx=2)
-            DrumRowCenterPad.rowconfigure(0, weight=0)
+            DrumRowCenterPad.grid(row=1, column=0, sticky="ew", padx=2, pady=2)
+            DrumRowCenterPad.rowconfigure(0, minsize=8)
             DrumRowCenterPad.rowconfigure(1, weight=0)
             DrumRowCenterPad.rowconfigure(2, weight=0)
+            DrumRowCenterPad.rowconfigure(2, weight=0)
+
             DrumRowCenterPad.columnconfigure(0, weight=0)
-            DrumRowCenterPad.columnconfigure(1, weight=1)
+            DrumRowCenterPad.columnconfigure(1, weight=0)
             DrumRowCenterPad.columnconfigure(2, weight=0)
             DrumRowCenterPad.columnconfigure(3, weight=0)
             DrumRowCenterPad.columnconfigure(4, weight=0)
-            DrumRowCenterPad.columnconfigure(5, weight=0)
-            DrumRowCenterPad.columnconfigure(6, weight=1)
-            DrumRowCenterPad.columnconfigure(7, weight=0)
 
             DrumRowCenterSoundLocationVar = tk.StringVar(value= Drum.get("CenterSoundFilePath", ""))
             CenterVolumeVar = tk.IntVar(value=Drum.get("CenterVolume", 100))
             CenterGhostNote = tk.IntVar(value=Drum.get("CenterGhostNoteThreshold", 100))
             CenterSlam= tk.IntVar(value=Drum.get("CenterSlamNoteThreshold", 100))
 
-            DrumRowCenterLabel = tk.Label(DrumRowCenterPad, text= "Center:")
+            DrumRowCenterLabel = tk.Label(DrumRowCenterPad, text= "Center Pad", width= 8)
             DrumRowCenterLabel.grid(row=0, column=0, sticky="ew")
 
-            DrumRowCenterBrowseButton = tk.Button(DrumRowCenterPad, command=lambda: SearchForSoundFile(Drum ,DrumRowCenterSoundLocationVar ), text="Browse", width=8)
-            DrumRowCenterBrowseButton.grid(row=0, column=1, sticky="ew")
+            DrumRowCenterSoundLabel = tk.Label(DrumRowCenterPad, text= "Sound:", width= 8)
+            DrumRowCenterSoundLabel.grid(row=1, column=0, sticky="ew")
+            DrumRowCenterBrowseButton = tk.Button(DrumRowCenterPad, command=lambda: SearchForSoundFile(Drum ,DrumRowCenterSoundLocationVar ), text="Browse", width=22)
+            DrumRowCenterBrowseButton.grid(row=1, column=1)
+            DrumRowCenterSoundLocationIF = tk.Entry(DrumRowCenterPad, textvariable=DrumRowCenterSoundLocationVar, state="readonly", width=44)
+            DrumRowCenterSoundLocationIF.grid(row=1, column=2, sticky="ew")
 
-            DrumRowCenterSoundLocationIF = tk.Entry(DrumRowCenterPad, textvariable=DrumRowCenterSoundLocationVar, state="readonly")
-            DrumRowCenterSoundLocationIF.grid(row=0, column=2, sticky="ew")
+            Divider = tk.Frame(DrumRowCenterPad,width=2,bg="#555")
+            Divider.grid(row=1,column=3 ,padx=5)
 
-            DrumRowCenterVolumeSlider = tk.Scale(DrumRowCenterPad,from_=0,to=100,orient="horizontal",variable=CenterVolumeVar,showvalue=False)
-            DrumRowCenterVolumeSlider.grid(row=0, column=3, sticky="ew")
+            
+            DrumRowCenterVolumeSlider = tk.Scale(DrumRowCenterPad,from_=0,to=100,orient="horizontal",variable=CenterVolumeVar,showvalue=False, length=300,)
+            DrumRowCenterVolumeSlider.grid(row=1, column=4)
+            DrumRowCenterVolumeShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterVolumeVar, width= 4)
+            DrumRowCenterVolumeShowLabel.grid(row=1, column=5, sticky="e")
+            DrumRowCenterVolumeLabel = tk.Label(DrumRowCenterPad, text= "Volume", width = 12, height=2)
+            DrumRowCenterVolumeLabel.grid(row=1, column=6, sticky="ew")
 
-            DrumRowCenterVolumeLabel = tk.Label(DrumRowCenterPad, text= "Volume:")
-            DrumRowCenterVolumeLabel.grid(row=0, column=4, sticky="ew")
-            DrumRowCenterVolumeShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterVolumeVar)
-            DrumRowCenterVolumeShowLabel.grid(row=0, column=5, sticky="w")
+            DrumRowCenterInputsLabel = tk.Label(DrumRowCenterPad, text= "Inputs:", width =8 )
+            DrumRowCenterInputsLabel.grid(row=2, column=0)
 
-            DrumRowCenterMidiInputButton = tk.Button(DrumRowCenterPad,text=str(Drum.get("CenterMidiInput", "Set Midi")),command=lambda: DetectNote(DrumRowCenterMidiInputButton,Row["Device"],Drum, "CenterMidiInput"))
-            DrumRowCenterMidiInputButton.grid(row=0, column=6, sticky="ew")
+            DrumRowCenterMidiInputButton = tk.Button(DrumRowCenterPad,text=("Set Midi"if Drum.get("CenterMidiInput") is None else str(Drum.get("CenterMidiInput"))),command=lambda: DetectNote(DrumRowCenterMidiInputButton,Row["Device"],Drum, "CenterMidiInput"), width =22)
+            DrumRowCenterMidiInputButton.grid(row=2, column=1)
 
-            DrumRowcenterKeyOutputButton = tk.Button(DrumRowCenterPad,text="+".join(Drum.get("CenterKeyOutput", [])) or "Set Key",command=lambda: DetectKey(DrumRowcenterKeyOutputButton,Drum, "CenterKeyOutput"))
-            DrumRowcenterKeyOutputButton.grid(row=0, column=7, sticky="ew")
+            DrumRowcenterKeyOutputButton = tk.Button(DrumRowCenterPad,text="+".join(Drum.get("CenterKeyOutput")) or "Set Key",command=lambda: DetectKey(DrumRowcenterKeyOutputButton,Drum, "CenterKeyOutput"), width=22)
+            DrumRowcenterKeyOutputButton.grid(row=2, column=2, sticky="ew")
 
             def UpdateCenterVolume(*args):
                 Drum["CenterVolume"] = CenterVolumeVar.get()
@@ -3808,41 +3859,68 @@ def AddMidiRow(Row=None, Loading=False):
 
             CenterSlam.trace_add("write",UpdateCenterSlam)
 
-            DrumRowCenterGhostSlider = tk.Scale(DrumRowCenterPad,from_=1,to=127,orient="horizontal",variable=CenterGhostNote,showvalue=False)
-            DrumRowCenterGhostSlider.grid(row=1, column=3, sticky="ew")
-            DrumRowCenterGhostLabel = tk.Label(DrumRowCenterPad, text= "Ghost Note Velocity:")
-            DrumRowCenterGhostLabel.grid(row=1, column=4, sticky="ew")
-            DrumRowCenterGhostShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterGhostNote)
-            DrumRowCenterGhostShowLabel.grid(row=1, column=5, sticky="w")
+            DrumRowCenterSliders = tk.Frame(DrumRowCenterPad)
+            DrumRowCenterSliders.grid(row=3, column=0, sticky="ew", padx=(0,2), pady=2,columnspan=7,)
+            DrumRowCenterSliders.columnconfigure(0, weight=0)
+            DrumRowCenterSliders.columnconfigure(1, weight=0)
+            DrumRowCenterSliders.columnconfigure(2, weight=0)
+            DrumRowCenterSliders.columnconfigure(3, weight=0)
+            DrumRowCenterSliders.columnconfigure(4, weight=0)
+            DrumRowCenterSliders.columnconfigure(5, weight=0)
+            DrumRowCenterSliders.columnconfigure(6, weight=0)
+            DrumRowCenterSliders.columnconfigure(7, weight=0)
+            DrumRowCenterSliders.rowconfigure(0, weight=0)
 
-            DrumRowCenterSlamSlider = tk.Scale(DrumRowCenterPad,from_=1,to=127,orient="horizontal",variable=CenterSlam,showvalue=False)
-            DrumRowCenterSlamSlider.grid(row=2, column=3, sticky="ew")
-            DrumRowCenterSlamLabel = tk.Label(DrumRowCenterPad, text= "Slam Note Velocity:")
-            DrumRowCenterSlamLabel.grid(row=2, column=4, sticky="ew")
-            DrumRowCenterSlamShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterSlam)
-            DrumRowCenterSlamShowLabel.grid(row=2, column=5, sticky="w")
+            DrumRowCenterVelocityLabel = tk.Label(DrumRowCenterSliders, text= "Velocities:", width = 12, height=2)
+            DrumRowCenterVelocityLabel.grid(row=0, column=0, sticky="w")
+
+            DrumRowCenterGhostSlider = tk.Scale(DrumRowCenterSliders,from_=1,to=127,orient="horizontal",variable=CenterGhostNote,showvalue=False, length=300,)
+            DrumRowCenterGhostSlider.grid(row=0, column=1, sticky="ew")
+            
+            DrumRowCenterGhostShowLabel = tk.Label(DrumRowCenterSliders,textvariable=CenterGhostNote)
+            DrumRowCenterGhostShowLabel.grid(row=0, column=2, sticky="e")
+
+            DrumRowCenterGhostLabel = tk.Label(DrumRowCenterSliders, text= "Ghost Note", width = 12, height=2)
+            DrumRowCenterGhostLabel.grid(row=0, column=3, sticky="e")
+
+            Divider = tk.Frame(DrumRowCenterSliders,width=2,bg="#555")
+            Divider.grid(row=0,column=4,sticky="ns",padx=5)
+
+            DrumRowCenterSlamSlider = tk.Scale(DrumRowCenterSliders,from_=1,to=127,orient="horizontal",variable=CenterSlam,showvalue=False, length=300,)
+            DrumRowCenterSlamSlider.grid(row=0, column=5, sticky="ew")
+
+            DrumRowCenterSlamShowLabel = tk.Label(DrumRowCenterSliders,textvariable=CenterSlam, width= 4)
+            DrumRowCenterSlamShowLabel.grid(row=0, column=6, sticky="e")
+
+            DrumRowCenterSlamLabel = tk.Label(DrumRowCenterSliders, text= "Slam Note", width = 12, height=2)
+            DrumRowCenterSlamLabel.grid(row=0, column=7, sticky="e")
+            
+        
+            
+
+
             #------------ RimRow
             DrumRowRimPad = tk.Frame(DrumRowDrumRow, bd=2, relief="solid")
-            DrumRowRimPad.grid(row=2, column=0, sticky="ew", padx=2)
+            DrumRowRimPad.grid(row=2, column=0, sticky="ew", padx=2,)
 
             DrumRowRimPad.rowconfigure(0, weight=0)
             DrumRowRimPad.rowconfigure(1, weight=0)
             DrumRowRimPad.rowconfigure(2, weight=0)
 
             DrumRowRimPad.columnconfigure(0, weight=0)
-            DrumRowRimPad.columnconfigure(1, weight=1)
-            DrumRowRimPad.columnconfigure(2, weight=0)
-            DrumRowRimPad.columnconfigure(3, weight=0)
+            DrumRowRimPad.columnconfigure(1, weight=0)
+            DrumRowRimPad.columnconfigure(2, weight=1)
+            DrumRowRimPad.columnconfigure(3, weight=1)
             DrumRowRimPad.columnconfigure(4, weight=0)
             DrumRowRimPad.columnconfigure(5, weight=0)
-            DrumRowRimPad.columnconfigure(6, weight=1)
+            DrumRowRimPad.columnconfigure(6, weight=0)
             DrumRowRimPad.columnconfigure(7, weight=0)
 
             DrumRowRimSoundLocationVar = tk.StringVar(value=Drum.get("RimSoundFilePath", ""))
             RimVolumeVar = tk.IntVar(value=Drum.get("RimVolume", 100))
             RimGhostNote = tk.IntVar(value=Drum.get("RimGhostNoteThreshold", 100))
             RimSlam = tk.IntVar(value=Drum.get("RimSlamNoteThreshold", 100))
-            DrumRowRimLabel = tk.Label(DrumRowRimPad,text="Rim:")
+            DrumRowRimLabel = tk.Label(DrumRowRimPad,text="Rim:", width= 8)
             DrumRowRimLabel.grid(row=0,column=0,sticky="ew")
             DrumRowRimBrowseButton = tk.Button(DrumRowRimPad,command=lambda: SearchForSoundFile(Drum,DrumRowRimSoundLocationVar),text="Browse",width=8)
             DrumRowRimBrowseButton.grid(row=0,column=1,sticky="ew")
@@ -3856,7 +3934,7 @@ def AddMidiRow(Row=None, Loading=False):
             DrumRowRimVolumeShowLabel.grid(row=0,column=5,sticky="w")
             DrumRowRimMidiInputButton = tk.Button(DrumRowRimPad,text=str(Drum.get("RimMidiInput", "Set Midi")),command=lambda: DetectNote(DrumRowRimMidiInputButton,Row["Device"],Drum,"RimMidiInput"))
             DrumRowRimMidiInputButton.grid(row=0,column=6,sticky="ew")
-            DrumRowRimKeyOutputButton = tk.Button(DrumRowRimPad,text="+".join(Drum.get("RimKeyOutput", [])) or "Set Key",command=lambda: DetectKey(DrumRowRimKeyOutputButton,Drum,"RimKeyOutput"))
+            DrumRowRimKeyOutputButton = tk.Button(DrumRowRimPad,text="+".join(Drum.get("RimKeyOutput")) or [],command=lambda: DetectKey(DrumRowRimKeyOutputButton,Drum,"RimKeyOutput"))
             DrumRowRimKeyOutputButton.grid(row=0,column=7,sticky="ew")
 
             def UpdateRimVolume(*args):
@@ -3890,26 +3968,26 @@ def AddMidiRow(Row=None, Loading=False):
             DrumRowRimSlamShowLabel.grid(row=2,column=5,sticky="w")
             
             #--- Drums, Cymbal Row
-            DrumRowCymbalVar = tk.BooleanVar(value=True)
+            
 
-            DrumRowCymbalToMainToggle = tk.Checkbutton(DrumRowCymbalRow, text="Cymbal?", variable=DrumRowCymbalVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowCymbalToMainToggle = tk.Checkbutton(DrumRowCymbalRow, text="Cymbal?", variable=DrumRowCymbalRowVar, command=lambda:SwitchDrumType("Main"))
             DrumRowCymbalToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
 
             #--- Drums, Kick Row
-            DrumRowKickVar = tk.BooleanVar(value=True)
+            
 
-            DrumRowKickToMainToggle = tk.Checkbutton(DrumRowKickRow, text="Kick?", variable=DrumRowKickVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowKickToMainToggle = tk.Checkbutton(DrumRowKickRow, text="Kick?", variable=DrumRowKickRowVar, command=lambda:SwitchDrumType("Main"))
             DrumRowKickToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
 
             #--- Drums, HiHat Row
-            DrumRowKickVar = tk.BooleanVar(value=True)
+            
 
-            DrumRowHihatToMainToggle = tk.Checkbutton(DrumRowDrumRow, text="Hihat?", variable=DrumRowKickVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowHihatToMainToggle = tk.Checkbutton(DrumRowHihatRow, text="Hihat?", variable=DrumRowHiHatRowVar, command=lambda:SwitchDrumType("Main"))
             DrumRowHihatToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
 
             SaveConfig()
 
-        DrumRowDrumToggle = tk.Checkbutton(MainDrumRowToggles, text="Drum?", variable=DrumRowDrumVar, command=lambda:SwitchDrumType("Drum"))
+        DrumRowDrumToggle = tk.Checkbutton(MainDrumRowToggles, text="Pad?", variable=DrumRowDrumVar, command=lambda:SwitchDrumType("Pad"))
         DrumRowDrumToggle.grid(row=0, column=0, sticky="ew", padx=2)
         DrumRowCymbalToggle = tk.Checkbutton(MainDrumRowToggles, text="Cymbal?", variable=DrumRowCymbalVar, command=lambda: SwitchDrumType("Cymbal"))
         DrumRowCymbalToggle.grid(row=0, column=1, sticky="ew", padx=2)
@@ -3919,6 +3997,8 @@ def AddMidiRow(Row=None, Loading=False):
         DrumRowHihatToggle.grid(row=0, column=3, sticky="ew", padx=2)
         RemoveDrumObjectFromListMainDrum = tk.Button(MainDrumRowToggles, text="Remove Drum", command=lambda:RemoveDrum(Drum))
         RemoveDrumObjectFromListMainDrum.grid(row=0, column=4, sticky="ew", padx=2)
+
+        SaveConfig()
     
     AddDrumObjectToList = tk.Button(DrumRow, text="Add Drum", command=lambda:AddDrumToList())
     AddDrumObjectToList.grid(row=0, column=0, sticky="ew", padx=2)
@@ -5721,7 +5801,7 @@ NullGit = tk.Frame(Notebook)
 Notebook.add(NullSuite, text="NullSuite")
 Notebook.add(NullWire, text="NullWire")
 Notebook.add(NullCursor, text="NullCursor")
-Notebook.add(NullMidi, text = "NullMidi")
+#Notebook.add(NullMidi, text = "NullMidi")
 Notebook.add(NullProton, text = "NullProton")
 Notebook.add(NullRip, text = "NullRip")
 Notebook.add(NullGit, text = "NullGit")
@@ -5747,6 +5827,9 @@ link = tk.Label(
 link.pack()
 
 link.bind("<Button-1>", lambda e: webbrowser.open_new("https://ko-fi.com/nullforgestudios"))
+
+ttk.Separator(NullSuiteFrame, orient="horizontal").pack(fill="both", pady=5)
+tk.Label(NullSuiteFrame, textvariable=StartUpTimeString).pack(fill="both", pady=5)
 
 # ------------------------------
 # Null Proton UI
@@ -6251,7 +6334,11 @@ ForcePush.grid(row=0,column=1,sticky="ew",padx=5,pady=2, columnspan=2)
 
 
 def NullCursorLoop():
-    global LastWarpTime, LastOutputs, LastInputs, LastSources
+    global LastWarpTime, LastOutputs, LastInputs, LastSources, LoadTimes
+
+    Start = time.time()
+
+    FirstLoop = True
     
     while True:
         if ScanForMouse:
@@ -6312,24 +6399,31 @@ def NullCursorLoop():
                 ExecuteWarp(TargetID, TargetEdge, Bounds, ratio)
                 break
 
+        if FirstLoop:
+            FirstLoop = False
+            LoadTimes['NullCursor'] = (time.time() - Start)
+
         time.sleep(max(ScanTime, WarpCooldown))
 
-        return
-    
 def NullWireLoop():
-    global LastOutputs, LastInputs, LastSources
+    global LastOutputs, LastInputs, LastSources, SystemLoading, LoadTimes
     LastOutputs = set()
     LastInputs = set()
     LastSources = set()
     tick = 0
+
+    Start = time.time()
+
+    FirstLoop = True
+
     while True:
         if tick == 0:
-                RefreshOutputDevices()
-                if OutputDevices != LastOutputs:
-                    print("Outputs changed")
-                    ApplyOutputs() 
-                    LastOutputs = OutputDevices.copy()
-                ForceAudioDeviceVolume()
+            RefreshOutputDevices()
+            if OutputDevices != LastOutputs:
+                print("Outputs changed")
+                ApplyOutputs() 
+                LastOutputs = OutputDevices.copy()
+            ForceAudioDeviceVolume()
 
         elif tick == 1:
             RefreshInputDevices()
@@ -6345,15 +6439,25 @@ def NullWireLoop():
                 ApplySources()
                 LastSources = AudioSources.copy()
             ForceSinkVolume()
+
         tick = (tick + 1) % 3
-        
-        time.sleep(1)
+
+        if FirstLoop:
+            if tick == 0:
+                FirstLoop = False
+                SystemLoading = False
+                LoadTimes["NullWire"] = (time.time() - Start)
+        else:
+            time.sleep(1)
 
 def NullMidiLoop():
+    global LoadTimes
+
+    Start = time.time()
+    FirstLoop = True
+
     while True:
-
         Ports = mido.get_input_names()
-
         NeededDevices = set()
 
         for Row in MidiRows:
@@ -6378,8 +6482,11 @@ def NullMidiLoop():
             if Device not in NeededDevices:
                 StopMidiListener(Device)
 
-        time.sleep(1)
+        if FirstLoop:
+            FirstLoop = False
+            LoadTimes['NullMidi'] = (time.time() - Start)
 
+        time.sleep(1)
 
 def HideToTray():
     if SystemLoading:
@@ -6387,26 +6494,38 @@ def HideToTray():
     Root.withdraw()
 
 Root.protocol("WM_DELETE_WINDOW", HideToTray)
-threading.Thread(target=WatchShowSignal, daemon=True).start()
-threading.Thread(target=StartTray, daemon=True).start()
-threading.Thread(target=RunUpdateCheck, daemon=True).start()
-threading.Thread(target=NullCursorLoop, daemon=True).start()
-threading.Thread(target=NullWireLoop, daemon=True).start()
 
 def Startup():
-    global StartupDelay
+    global StartUpDelay, SystemLoading, StartUpTime, SystemLoading, LoadTimes
+    StartUpTime = time.time()
+    SystemLoading = True
     LoadConfig()
-    StartupDelay +=3
+    LoadTimes['UI&Data'] = (time.time() - StartUpTime)
+    LoadPopup.destroy()
 
-    def FinishLoading():
-        global SystemLoading 
-        SystemLoading = False 
-        LoadPopup.destroy()
+    threading.Thread(target=StartTray, daemon=True).start()
+    threading.Thread(target=WatchShowSignal, daemon=True).start()
+    
+    
+    def StartBackgroundThreads():
+        global StartUpTime, WaitTime, StartUpTimeString
+        def UpdateStartUpTimeString():
+            StartUpTimeString.set(f"Total Start Time:{LoadTimes.get("All"):.2f} seconds. \n Generating UI/Loading Your Data:{LoadTimes.get("UI&Data"):.2f}\n NullWire Scanning Your Audio:{LoadTimes.get("NullWire"):.2f}\n NullCursor Scanning Your Monitors/Mouse:{LoadTimes.get("NullCursor"):.2f}\n NullMidi Scanning Your Midi Devices:{LoadTimes.get("NullMidi"):.2f}")
 
-    Root.after(
-        StartupDelay,
-        FinishLoading
-    )
+        threading.Thread(target=NullCursorLoop, daemon=True).start()
+        threading.Thread(target=NullMidiLoop, daemon=True).start()
+        threading.Thread(target=RunUpdateCheck, daemon=True).start()
+        threading.Thread(target=NullWireLoop, daemon=True).start()
 
-Root.after(StartupDelay, Startup)
+        while SystemLoading:
+            time.sleep(0.01)
+            continue
+
+        LoadTimes['All'] = (time.time() - StartUpTime)
+
+        UpdateStartUpTimeString()
+
+    Root.after(1,StartBackgroundThreads)
+
+Root.after(1, Startup)
 Root.mainloop()
