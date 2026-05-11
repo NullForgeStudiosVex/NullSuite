@@ -6572,6 +6572,6 @@ def Startup():
         UpdateStartUpTimeString()
 
     Root.after(1,StartBackgroundThreads)
-
+ 
 Root.after(1, Startup)
 Root.mainloop()
