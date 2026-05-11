@@ -13,30 +13,20 @@ import re
 import shutil
 import getpass
 import queue
+from queue import Queue
 import select
 import mido
 import uinput
 
-# ==========================================================================================
-# Longe - Mainchaps
-# ==========================================================================================
+os.environ["PULSE_PROP_application.name"] = "NullMidiSounds"
 
-# ————————————————————————————————————————————————————————————
-# Med - Mid chaps
-# ————————————————————————————————————————————————————————————
-
-# ------------------------------
-# Smol - minichaps
-# ------------------------------
-
-# --------------- tab usually
-
-# ^ keepin these here for copy paste~ ... don't judge me.
-
+import pygame
 
 # ==========================================================================================
 # Startup :)
 # ==========================================================================================
+SystemLoading = True
+StartupDelay = 3 #if you're looking at this thinking "wtf why a delay?" because tkinter runs on 1 thread...trying to make it load everything, and generate UI, and fill the UI all in 1ms is....bad. so. delay. you wont notice 3ms yo.
 Root = tk.Tk()
 Root.title("NullSuite")
 Root.geometry("1600x900")
@@ -45,7 +35,7 @@ Main.pack(fill="both", expand=True, padx=10, pady=10)
 style = ttk.Style()
 style.map("TNotebook.Tab",foreground=[("disabled", "#666666"),("selected", "#000000"),("!disabled", "#000000")])
 
-SystemLoading = True
+
 LoadPopup = tk.Toplevel(Root)
 LoadPopup.title("Loading NullSuite Data")
 Width = 800
@@ -107,12 +97,17 @@ CurrentProcess = None
 # NullMidi
 # ------------------------------
 MidiRows = []
-Listeners = {}
+SaveRows = []
+MidiDeviceListeners = {}
 UInputDevice = None
 ActiveCapture = {
     "Type": None,
     "Cancel": False
 }
+SoundQueue = Queue()
+pygame.mixer.init(buffer=256)
+pygame.mixer.set_num_channels(128)
+OverflowChannel = 33
 # ------------------------------
 # NullWire
 # ------------------------------
@@ -267,12 +262,31 @@ def StartTray():
 
     Gtk.main()
 
+def GetSavableMidiRows():
+    global SaveRows
+    SaveRows = []
+    for Row in MidiRows:
+        SaveRow = {}
+        for Key, Value in Row.items():
+            if Key in [
+                "VirtualPort",
+                "Frame",
+                "Button",
+                "Widgets"
+            ]:
+                continue
+            SaveRow[Key] = Value
+        SaveRows.append(SaveRow)
+    return SaveRows
+
 def LoadConfig():
+    global StartupDelay # to control delay
     global Profiles, ActiveProfile, ScanForMouse #NullWire
     global Devices, Sinks #NullWire
     global ProtonGames #NullProton
     global MidiRows #NullMidi
     global Repos #NullGit
+    
 
     if not os.path.isfile(ConfigPath):
         return False
@@ -291,108 +305,115 @@ def LoadConfig():
         midi = data.get("NullMidi", {})
         repos = data.get("NullGit", {})
 
-
-        print("Loading NullProton")
-        # ==============================
-        # NullProton
-        # ==============================
         
-        ProtonVars["Default"].set(proton.get("Default", "[ not set ]"))
-        ProtonVars["A"].set(proton.get("A", "[ not set ]"))
-        ProtonVars["B"].set(proton.get("B", "[ not set ]"))
-
-        ProtonGames.clear()
-        ProtonGames.extend(proton.get("Games", []))
-
-        print("Loading NullWire")
         # ==============================
         # NullWire
-        # ==============================
+        # ==============================.
+        print("Loading NullWire")
+        StartupDelay += 3
+
+        def LoadNullWire():
+            global Sinks, Devices
+            Sinks.clear()
+            Sinks.update(wire.get("Sinks", {}))
+
+            Devices["A"].update(wire.get("DevicesA", {}))
+            Devices["M"].update(wire.get("DevicesM", {}))
+
+            subprocess.run([NWPath, "ClearSinks"])
+
+            for name, sink in Sinks.items():
+                subprocess.run([NWPath, "CreateSink", name])
+                for d, enabled in sink["Outputs"].items():
+                    device = Devices["A"].get(d)
+                    if not device or not enabled:
+                        continue
+                    subprocess.run([NWPath,"ConnectSinkToAux",name,device["ID"],str(int(sink["Mono"]))])
+                for d, enabled in sink["Inputs"].items():
+                    device = Devices["M"].get(d)
+                    if not device or not enabled:
+                        continue
+                    subprocess.run([NWPath,"ConnectMicToSink",device["ID"],name])
+                for src in sink["Sources"]:
+                    subprocess.run([NWPath,"ConnectSourceToSink",src,name])
+                
+            NullWireRebuildUI()
+            RefreshRoutingUI()
+
+        Root.after(StartupDelay, LoadNullWire)
         
-        Sinks.clear()
-        Sinks.update(wire.get("Sinks", {}))
-
-        Devices["A"].update(wire.get("DevicesA", {}))
-        Devices["M"].update(wire.get("DevicesM", {}))
-
-        subprocess.run([NWPath, "ClearSinks"])
-
-        for name, sink in Sinks.items():
-            subprocess.run([NWPath, "CreateSink", name])
-            for d, enabled in sink["Outputs"].items():
-                device = Devices["A"].get(d)
-                if not device or not enabled:
-                    continue
-                subprocess.run([NWPath,"ConnectSinkToAux",name,device["ID"],str(int(sink["Mono"]))])
-            for d, enabled in sink["Inputs"].items():
-                device = Devices["M"].get(d)
-                if not device or not enabled:
-                    continue
-                subprocess.run([NWPath,"ConnectMicToSink",device["ID"],name])
-            for src in sink["Sources"]:
-                subprocess.run([NWPath,"ConnectSourceToSink",src,name])
-        
-        print("Loading NullCursor")
         # ==============================
         # NullCursor
         # ==============================
-        Profiles.clear()
-        Profiles.update(cursor.get("Profiles", {}))
-        ActiveProfile = cursor.get("ActiveProfile")
-        ScanForMouse = cursor.get("ScanForMouse", False)
-        print("Loading NullMidi")
+        print("Loading NullCursor")
+        StartupDelay += 3
+
+        def LoadNullCursor():
+            global ActiveProfile, ScanForMouse
+            Profiles.clear()
+            Profiles.update(cursor.get("Profiles", {}))
+            ActiveProfile = cursor.get("ActiveProfile")
+            ScanForMouse = cursor.get("ScanForMouse", False)
+            if len(Profiles) == 0:
+                Profiles["Default"] = {
+                    "Layout": CaptureLayout(),
+                    "Warps": {}
+                }
+                ActiveProfile = "Default"
+                SaveConfig()
+            BuildUIFromProfiles()
+            NullCursorEnabledVar.set(ScanForMouse)
+            ToggleNullCursor()
+
+        Root.after(StartupDelay, LoadNullCursor)
+
+
         # ==============================
         # NullMidi
         # ==============================
+        print("Loading NullMidi")
+        StartupDelay += 3
 
-        for row in midi.get("MidiRows", []):
-            MidiRows.append({
-            "Device": row.get("Device"),
-            "Note": row.get("Note", -1),
-            "Key": row.get("Key", []),
-            "Cooldown": row.get("Cooldown", 0.05),
-            "LastHit": 0
-        })
+        def LoadNullMidi():
+            for row in midi.get("MidiRows", []):
+                AddMidiRow(row, True)
 
-        print("Loading NullGit")
+        Root.after(StartupDelay, LoadNullMidi)
+
         # ==============================
         # NullGit
         # ==============================
+        print("Loading NullGit")
+        StartupDelay += 3
 
-        Repos = repos.get("Repos", {})
+        def LoadNullGit():
+            global Repos
+            Repos = repos.get("Repos", {})
+            BuildRepoList()
 
-        print("Doing Meth...ods")
-        # ==============================================
-        # Methods that save belong at the end. naughty.
-        # ==============================================
+        Root.after(StartupDelay, LoadNullGit)
+
+        # ==============================
+        # NullProton
+        # ==============================
+        print("Loading NullProton")
+        StartupDelay += 3
 
 
-        for Game in ProtonGames.copy():
-            AddGameRow(Game, True)
+        def LoadNullProton():
+            ProtonVars["Default"].set(proton.get("Default", "[ not set ]"))
+            ProtonVars["A"].set(proton.get("A", "[ not set ]"))
+            ProtonVars["B"].set(proton.get("B", "[ not set ]"))
 
-        for Row in MidiRows.copy():
-            AddRow(Row, Loading=True)
+            ProtonGames.clear()
+            ProtonGames.extend(proton.get("Games", []))
 
-        NullWireRebuildUI()
+            for Game in ProtonGames.copy():
+                AddGameRow(Game, True)
 
-        RefreshRoutingUI()
-
-        if len(Profiles) == 0:
-            Profiles["Default"] = {
-                "Layout": CaptureLayout(),
-                "Warps": {}
-            }
-            ActiveProfile = "Default"
-            SaveConfig()
-
-        BuildUIFromProfiles()
-
-        NullCursorEnabledVar.set(ScanForMouse)
-        ToggleNullCursor()
-
-        BuildRepoList()
-
-            
+        Root.after(StartupDelay, LoadNullProton)
+        
+        StartupDelay += 3
         return True
 
     except Exception as e:
@@ -400,6 +421,10 @@ def LoadConfig():
         return False
 
 def SaveConfig():
+    if SystemLoading:
+        return
+    
+    
     data = {
         # ==============================
         # NullProton
@@ -432,7 +457,9 @@ def SaveConfig():
         # ==============================
         # NullMidi
         # ==============================
-        "NullMidi": {"MidiRows":MidiRows},
+        "NullMidi": {
+            "MidiRows": GetSavableMidiRows()
+        },
 
         # ==============================
         # NullGit
@@ -2912,9 +2939,9 @@ def FinishRip():
 # ————————————————————————————————————————————————————————————
 # NullMidi
 # ————————————————————————————————————————————————————————————
-def CancelActiveCapture():
-    ActiveCapture["Cancel"] = True
-
+# ------------------------------ 
+# Key Handling 
+# ------------------------------
 def BuildDevice():
     global UInputDevice
     Keys = set()
@@ -2951,43 +2978,6 @@ def PressKeyCombo(Keys):
 
     UInputDevice.syn()
 
-def GetPorts():
-    try:
-        return mido.get_input_names()
-    except:
-        return []
-
-def DetectNote(Button, Device, Row, Timeout=5):
-    CancelActiveCapture()
-    ActiveCapture["Cancel"] = False
-
-    Button.config(text=f"Waiting... {Timeout}")
-
-    def Worker():
-        EndTime = time.time() + Timeout
-
-        try:
-            with mido.open_input(Device) as Port:
-                while time.time() < EndTime:
-                    if ActiveCapture["Cancel"]:
-                        return
-
-                    for Msg in Port.iter_pending():
-                        if Msg.type == "note_on":
-                            Row["Note"] = Msg.note
-                            Button.config(text=str(Msg.note))
-                            SaveConfig()
-                            return
-
-                    time.sleep(0.01)
-
-            Button.config(text="Set Midi")
-
-        except:
-            Button.config(text="Error")
-
-    threading.Thread(target=Worker, daemon=True).start()
-
 def NormalizeKey(Key):
     Key = Key.upper()
     if "SHIFT" in Key: return "LEFTSHIFT"
@@ -3018,165 +3008,945 @@ def IsOnlyModifiers(Keys):
             return False
     return True
 
-def DetectKey(Button, Row, Timeout=5):
+def CancelActiveCapture():
+    ActiveCapture["Cancel"] = True
+
+def DetectKey(Button, Target, Field, Timeout=5):
+
     CancelActiveCapture()
     ActiveCapture["Cancel"] = False
 
-    Button.config(text=f"Waiting... {Timeout}")
+    Button.config(text=f"Waiting... {Timeout}\n Hold ESC to clear")
 
     HeldKeys = set()
+
     LastInputTime = [0]
+
+    EscapeHeld = [False]
+
     EndTime = time.time() + Timeout
 
+    def Cleanup():
+
+        Root.unbind("<KeyPress>")
+        Root.unbind("<KeyRelease>")
+
+
+    def ClearBinding():
+
+        if not EscapeHeld[0]:
+            return
+
+        Target[Field] = []
+
+        Button.config(text="Set Key")
+
+        BuildDevice()
+        SaveConfig()
+        Cleanup()
+
+
     def OnPress(Event):
+
         if ActiveCapture["Cancel"]:
             Cleanup()
             return
 
         Key = NormalizeKey(Event.keysym)
+
+        if Key == "ESCAPE":
+
+            if not EscapeHeld[0]:
+
+                EscapeHeld[0] = True
+
+                Root.after(1000, ClearBinding)
+
+            return
+
         HeldKeys.add(Key)
+
         LastInputTime[0] = time.time()
 
-        Button.config(text="+".join(FormatKeyName(K) for K in SortKeys(HeldKeys)))
+        Button.config(
+            text="+".join(
+                FormatKeyName(K)
+                for K in SortKeys(HeldKeys)
+            )
+        )
+
+    def OnRelease(Event):
+
+        Key = NormalizeKey(Event.keysym)
+
+        if Key == "ESCAPE":
+
+            EscapeHeld[0] = False
+
 
     def Tick():
+
         if ActiveCapture["Cancel"]:
             Cleanup()
             return
 
         if not HeldKeys:
+
             Remaining = int(EndTime - time.time())
+
             if Remaining <= 0:
+
                 Button.config(text="Set Key")
+
                 Cleanup()
+
                 return
 
             Button.config(text=f"Waiting... {Remaining}")
+
             Root.after(1000, Tick)
+
             return
 
         if IsOnlyModifiers(HeldKeys):
+
             Remaining = int(EndTime - time.time())
+
             if Remaining <= 0:
-                Row["Key"] = SortKeys(HeldKeys)
-                Button.config(text="+".join(FormatKeyName(K) for K in Row["Key"]))
+
+                Target[Field] = SortKeys(HeldKeys)
+
+                Button.config(
+                    text="+".join(
+                        FormatKeyName(K)
+                        for K in Target[Field]
+                    )
+                )
+
                 BuildDevice()
+
                 SaveConfig()
+
                 Cleanup()
+
                 return
 
-            Button.config(text=f"{FormatKeyName(list(HeldKeys)[0])}... {Remaining}")
+            Button.config(
+                text=f"{FormatKeyName(list(HeldKeys)[0])}... {Remaining}"
+            )
+
             Root.after(1000, Tick)
+
             return
 
         if time.time() - LastInputTime[0] > 0.5:
-            Row["Key"] = SortKeys(HeldKeys)
-            Button.config(text="+".join(FormatKeyName(K) for K in Row["Key"]))
+
+            Target[Field] = SortKeys(HeldKeys)
+
+            Button.config(
+                text="+".join(
+                    FormatKeyName(K)
+                    for K in Target[Field]
+                )
+            )
+
             BuildDevice()
+
             SaveConfig()
+
             Cleanup()
+
             return
 
         Root.after(100, Tick)
 
-    def Cleanup():
-        Root.unbind("<KeyPress>")
-
     Root.bind("<KeyPress>", OnPress)
+
+    Root.bind("<KeyRelease>", OnRelease)
+
     Tick()
 
-def MidiListener(Device):
-    while True:
+# ------------------------------ 
+# Midi Handling
+# ------------------------------
+def StartMidiListener(Device):
+
+    if Device in MidiDeviceListeners:
+        return
+
+    Running = True
+
+    def MidiListener():
+
+        try:
+            Port = mido.open_input(Device)
+
+        except Exception as E:
+            print(f"❌ Failed To Open MIDI Device: {Device}")
+            print(E)
+            return
+
+        MidiDeviceListeners[Device]["Port"] = Port
+
+        print(f"🎹 Started MIDI Listener: {Device}")
+
+        while MidiDeviceListeners[Device]["Running"]:
+
+            try:
+                for Message in Port.iter_pending():
+
+                    HandleMidiMessage(Device, Message)
+
+                time.sleep(0.001)
+
+            except Exception as E:
+                print(f"❌ MIDI Runtime Error ({Device})")
+                print(E)
+                break
+
+        try:
+            Port.close()
+        except:
+            pass
+
+        print(f"🛑 Closed MIDI Listener: {Device}")
+
+    Thread = threading.Thread(target=MidiListener, daemon=True)
+
+    MidiDeviceListeners[Device] = {
+        "Thread": Thread,
+        "Port": None,
+        "Running": Running
+    }
+
+    Thread.start()
+
+def StopMidiListener(Device):
+
+    if Device not in MidiDeviceListeners:
+        return
+
+    MidiDeviceListeners[Device]["Running"] = False
+
+    Port = MidiDeviceListeners[Device].get("Port")
+
+    if Port:
+        try:
+            Port.close()
+        except:
+            pass
+
+    del MidiDeviceListeners[Device]
+
+    print(f"🛑 Stopped MIDI Listener: {Device}")
+
+def HandleMidiMessage(Device, Message):
+
+    for Row in MidiRows:
+
+        if not Row.get("Active"):
+            continue
+
+        if Row.get("Device") != Device:
+            continue
+
+        print(Device, Message)
+
+def GetPorts():
+    try:
+        RawPorts = mido.get_input_names()
+    except Exception:
+        return []
+    IgnoreKeywords = ("Virtual","LoopMIDI","Through","Midi Through","Monitor")
+    ValidPorts = []
+
+    for Port in RawPorts:
+        if any(K in Port for K in IgnoreKeywords):
+            continue
+        if Port not in ValidPorts:
+            ValidPorts.append(Port)
+
+    return ValidPorts
+
+def DetectNote(Button, Device, Target, Field, Timeout=5):
+    CancelActiveCapture()
+    ActiveCapture["Cancel"] = False
+    Button.config(text=f"Waiting... {Timeout}\n Hold ESC to clear")
+    EscapeHeld = [False]
+
+
+    def Cleanup():
+        Root.unbind("<KeyPress>")
+        Root.unbind("<KeyRelease>")
+
+    def ClearBinding():
+        if not EscapeHeld[0]:
+            return
+
+        Target[Field] = None
+        Button.config(text="Set Midi")
+        SaveConfig()
+        Cleanup()
+
+    def OnPress(Event):
+        Key = NormalizeKey(Event.keysym)
+        if Key == "ESCAPE":
+            if not EscapeHeld[0]:
+                EscapeHeld[0] = True
+                Root.after(1000, ClearBinding)
+
+
+    def OnRelease(Event):
+        Key = NormalizeKey(Event.keysym)
+        if Key == "ESCAPE":
+            EscapeHeld[0] = False
+
+    def Worker():
+        EndTime = time.time() + Timeout
         try:
             with mido.open_input(Device) as Port:
-                for Msg in Port:
-                    if Msg.type == "note_on" and Msg.velocity > 0:
-                        for Row in MidiRows:
-                            if Row["Device"] != Device:
-                                continue
-                            if Row["Note"] != Msg.note:
-                                continue
+                while time.time() < EndTime:
+                    if ActiveCapture["Cancel"]:
+                        Cleanup()
+                        return
+                    for Msg in Port.iter_pending():
+                        if Msg.type == "note_on":
+                            Target[Field] = Msg.note
+                            Button.config(text=str(Msg.note))
+                            SaveConfig()
+                            Cleanup()
+                            return
+                    time.sleep(0.01)
+            Button.config(text="Set Midi")
+            Cleanup()
 
-                            Now = time.time()
-                            if Now - Row["LastHit"] < Row["Cooldown"]:
-                                continue
+        except:
+            Button.config(text="Error")
+            Cleanup()
 
-                            Row["LastHit"] = Now
-                            PressKeyCombo(Row["Key"])
+    Root.bind("<KeyPress>", OnPress)
+    Root.bind("<KeyRelease>", OnRelease)
+    threading.Thread(target=Worker, daemon=True).start()
 
+def MidiListener(Row):
+    global LastPedalValue
+    Device = Row["Device"]
+    while True:
+        if not Row["Active"]:
+            continue
+
+        if Row['Device'] != Device:
+            continue
+
+        try:
+            with mido.open_input(Device) as Port:
+                for msg in Port:
+                    
+                    if msg.type == "control_change":
+                        if Row['Drums']:
+                            if msg.control == 4:
+                                LastPedalValue = msg.value
+                            continue
+                        elif Row['Keyboard']:
+                            continue
+                        else:
+                            continue
+                        continue
+
+                    if msg.type == "polytouch":
+                        if Row['Drums']:
+                            for i in range(pygame.mixer.get_num_channels()):
+                                pygame.mixer.Channel(i).stop()
+                            continue
+                        elif Row['Keyboard']:
+                            continue
+                        else:
+                            continue
+                        continue
+
+                    if msg.type == "note_on" and msg.velocity >= Row['Input']['VelocityRequirement']:
+                        if Row['Drums']:
+                            continue
+                        elif Row['Keyboard']:
+                            continue
+                        else:
+                            continue
+                    
+                    if not Row['PressKeys']:
+                        Mapping = Row["Mappings"].get(msg.note)
+                        if not Mapping:
+                            continue
+                        else:
+                            PressKeyCombo(Mapping["Keys"])
+
+                    
         except Exception as E:
             print("Listener Error:", E)
             time.sleep(1)
 
-def AddRow(State=None, Loading=False):
-    Frame = tk.Frame(MidiContainer)
-    Frame.pack(fill="x", pady=5)
+def CreateVirtualPort(Row):
+    Name = f"NullMidiVirtualPort{len(MidiRows)+1:02d}"
+    try:
+        Port = mido.open_output(Name, virtual=True)
+        Row["VirtualPortName"] = Name
+        Row["VirtualPort"] = Port
+    except Exception as E:
+        print(f"❌ Failed To Create Virtual Port: {E}")
+        Row["VirtualPortName"] = None
+        Row["VirtualPort"] = None
 
-    Frame.grid_columnconfigure(0, weight=0)
-    Frame.grid_columnconfigure(1, weight=2)
-    Frame.grid_columnconfigure(2, weight=1)
-    Frame.grid_columnconfigure(3, weight=1)
+# ------------------------------ 
+# UI Stuff
+# ------------------------------
 
-    if State:
-        Row = {
-            "Device": State["Device"],
-            "Note": State["Note"],
-            "Key": State["Key"],
-            "Cooldown": State.get("Cooldown", 0.05),
-            "LastHit": 0
-        }
-    else:
-        Row = {
-            "Device": None,
-            "Note": -1,
-            "Key": [],
-            "Cooldown": 0.05,
-            "LastHit": 0
-        }
+def SearchForSoundFile(Drum, var):
+        path = filedialog.askopenfilename(
+            filetypes=[("WAV files", "*.wav"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+        
+        Drum['CenterSoundFilePath'] = path
+        var.set(path)
 
-    tk.Button(Frame, text="Remove", command=lambda: RemoveRow(Frame, Row)).grid(row=0, column=0, padx=3, sticky="ew")
+        SaveConfig()
 
-    Ports = GetPorts()
-    DevVar = tk.StringVar()
+def AddMidiRow(Row=None, Loading=False):
+    Frame = tk.Frame(MidiContainer, bd=2, relief="solid")
+    Frame.pack(fill="x", padx=5, pady=5)
+    Frame.columnconfigure(0, weight=1)
+    Frame.rowconfigure(0, weight=1)
 
-    if Row["Device"] and Row["Device"] in Ports:
-        DevVar.set(Row["Device"])
-    elif Ports:
-        DevVar.set(Ports[0])
-    else:
-        DevVar.set("")
+    if Row is None:
+        Row = {}
+        Row['Index'] = len(MidiRows) -1
+        Row['Device'] = None
+        Row['Controller'] = False
+        Row['Drums'] = False
+        Row['Keyboard'] = False
+        Row['Active'] = True
+        Row['Sounds'] = False
+        Row['DrumList'] = []
+        Row['KeyboardList'] = []
+        Row['ControllerList'] = []
 
-    Dropdown = ttk.Combobox(Frame, values=Ports, textvariable=DevVar, state="readonly")
-    Dropdown.grid(row=0, column=1, padx=3, sticky="ew")
+    CreateVirtualPort(Row)
 
-    def OnDeviceChange(Event=None):
-        Row["Device"] = DevVar.get()
+    TogglesRow = tk.Frame(Frame)
+    TogglesRow.pack(fill="x", padx=5, pady=5)
+    TogglesRow.columnconfigure(0, weight=1)
+    TogglesRow.columnconfigure(1, weight=1)
+    TogglesRow.columnconfigure(2, weight=1)
+    TogglesRow.columnconfigure(3, weight=1)
+    TogglesRow.columnconfigure(4, weight=1)
 
-        if Row["Device"] not in Listeners:
-            Thread = threading.Thread(target=MidiListener, args=(Row["Device"],), daemon=True)
-            Thread.start()
-            Listeners[Row["Device"]] = Thread
+    MainControllerVar = tk.BooleanVar(value=Row.get("Controller", False))
+    MainDrumVar = tk.BooleanVar(value=Row.get("Drums", False))
+    MainKeyboardVar = tk.BooleanVar(value=Row.get("Keyboard", False))
 
-        if not Loading:
+    BasicTopRow = tk.Frame(Frame)
+    BasicTopRow.pack(fill="x", padx=5, pady=5)
+    BasicTopRow.columnconfigure(0, weight=0)
+    BasicTopRow.columnconfigure(1, weight=0)
+    BasicTopRow.columnconfigure(2, weight=0)
+    BasicTopRow.columnconfigure(3, weight=2)
+    BasicTopRow.columnconfigure(4, weight=1)
+    BasicTopRow.rowconfigure(0, weight=0)
+    
+    ControllerRow = tk.Frame(Frame)
+    ControllerRow.pack(fill="x", padx=5, pady=5)
+    ControllerRow.pack_forget()
+
+    DrumRow = tk.Frame(Frame)
+    DrumRow.pack(fill="x", padx=5, pady=5)
+    DrumRow.columnconfigure(0, weight=1)
+    DrumRow.rowconfigure(0,weight=0)
+    DrumRow.rowconfigure(1,weight=0)
+    DrumRow.pack_forget()
+
+    KeyboardRow = tk.Frame(Frame)
+    KeyboardRow.pack(fill="x", padx=5, pady=5)
+    KeyboardRow.pack_forget()
+
+
+    BasicControllerVar = tk.BooleanVar(value=True)
+    BasicDrumVar = tk.BooleanVar(value=True)
+    BasicKeyboardVar = tk.BooleanVar(value=True)
+
+    ActiveMidiDevice = tk.BooleanVar(value=Row.get("Active", False))
+    
+    def HideBasictopRow():
+        BasicControllerVar.set(True)
+        BasicDrumVar.set(True)
+        BasicKeyboardVar.set(True)
+        Row['Controller'] = False
+        Row['Drums'] = False
+        Row['Keyboard'] = False
+        BasicTopRow.pack_forget()
+        TogglesRow.pack(fill="x", padx=5, pady=5)
+
+    def UpdateActiveState():
+        Row["Active"] = ActiveMidiDevice.get()
+        SaveConfig()
+
+
+    BasicTopRowControllerToggle = tk.Checkbutton(BasicTopRow,variable=BasicControllerVar,text="Controller", command=lambda:HideBasictopRow())
+    BasicTopRowControllerToggle.grid(row=0, column=0, sticky="ew", padx=2)
+    BasicTopRowControllerToggle.grid_remove()
+    BasicTopRowDrumToggle = tk.Checkbutton(BasicTopRow,variable=BasicDrumVar,text="Drums", command=lambda:HideBasictopRow())
+    BasicTopRowDrumToggle.grid(row=0, column=0, sticky="ew", padx=2)
+    BasicTopRowDrumToggle.grid_remove()
+    BasicTopRowKeyboardToggle = tk.Checkbutton(BasicTopRow,variable=BasicKeyboardVar,text="Keyboard", command=lambda:HideBasictopRow())
+    BasicTopRowKeyboardToggle.grid(row=0, column=0, sticky="ew", padx=2)
+    BasicTopRowKeyboardToggle.grid_remove()
+
+    ttk.Separator(BasicTopRow, orient="vertical").grid(row=0, column=1, sticky="ns")
+
+    BasicTopRowActiveMidi = tk.Checkbutton(BasicTopRow,variable=ActiveMidiDevice, text="Active?", command=lambda: UpdateActiveState())
+    BasicTopRowActiveMidi.grid(row=0, column=2, sticky="ew", padx=2)
+
+    def UpdateMidiDevice(Event=None):
+        Row["Device"] = MidiDeviceVar.get()
+        SaveConfig()
+
+    MidiDeviceVar = tk.StringVar(value=Row.get("MidiDevice", ""))
+    BasicTopRowMidiDeviceDropDown = ttk.Combobox(BasicTopRow, textvariable=MidiDeviceVar, state="readonly",values=GetPorts())
+    BasicTopRowMidiDeviceDropDown.grid(row=0, column=3, sticky="ew", padx=2)
+    BasicTopRowMidiDeviceDropDown.bind("<<ComboboxSelected>>",UpdateMidiDevice)
+
+    BasicTopRowDelete = tk.Button(BasicTopRow, text="Delete Row", command=lambda:RemoveMidiRow(Frame, Row))
+    BasicTopRowDelete.grid(row=0, column=4, sticky="ew", padx=2)
+
+    BasicTopRow.pack_forget()
+
+    def HideToggleRowShowOtherRow(Which):
+        TogglesRow.pack_forget()
+        ControllerRow.pack_forget()
+        DrumRow.pack_forget()
+        KeyboardRow.pack_forget()
+        BasicTopRow.pack(fill="x", padx=5, pady=5)
+        Row['Controller'] = False
+        Row['Drums'] = False
+        Row['Keyboard'] = False
+        Row['Advanced'] = False
+        MainControllerVar.set(False)
+        MainDrumVar.set(False)
+        MainKeyboardVar.set(False)
+
+        if Which == "Controller":
+            Row['Controller'] = True
+            ControllerRow.pack(fill="x", padx=5, pady=5)
+            BasicTopRowControllerToggle.grid()
+        elif Which == "Drums":
+            Row['Drums'] = True
+            DrumRow.pack(fill="x", padx=5, pady=5)
+            BasicTopRowDrumToggle.grid()
+        elif Which == "Keyboard":
+            Row['Keyboard'] = True
+            KeyboardRow.pack(fill="x", padx=5, pady=5)
+            BasicTopRowKeyboardToggle.grid()
+        SaveConfig()
+    
+    ControllerToggle = tk.Checkbutton(TogglesRow, text="Controller", variable=MainControllerVar, command=lambda: HideToggleRowShowOtherRow("Controller"))
+    ControllerToggle.grid(row=0, column=0, sticky="ew", padx=2)
+    DrumsToggle = tk.Checkbutton(TogglesRow, text="Drums", variable=MainDrumVar, command=lambda: HideToggleRowShowOtherRow("Drums"))
+    DrumsToggle.grid(row=0, column=1, sticky="ew", padx=2)
+    KeyboardToggle = tk.Checkbutton(TogglesRow, text="Keyboard", variable=MainKeyboardVar, command=lambda: HideToggleRowShowOtherRow("Keyboard"))
+    KeyboardToggle.grid(row=0, column=2, sticky="ew", padx=2)
+    ToggleRowDelete = tk.Button(TogglesRow, text="Delete Row", command=lambda:RemoveMidiRow(Frame, Row))
+    ToggleRowDelete.grid(row=0, column=4, sticky="ew", padx=2)
+
+    # --------------- Drums
+    
+
+    DrumList = ScrollableFrame(DrumRow)
+
+    DrumList.grid(row=1, column=0, sticky="ewns", padx=2)
+    DrumList.columnconfigure(0,weight=1)
+    DrumList.rowconfigure(1,weight=1)
+
+    def AddDrumToList(Drum=None, Loading=False):
+        MainDrumFrame = tk.Frame(DrumList.Inner, bd=2, relief="solid")
+        MainDrumFrame.pack(fill="x", padx=5, pady=5)
+
+        MainDrumFrame.columnconfigure(0, weight=1)
+        MainDrumFrame.rowconfigure(0, weight=1)
+
+        if Drum is None:
+            Drum = {}
+            Drum['Drum'] = False
+            Drum['Cymbal'] = False
+            Drum['Kick'] = False
+            Drum['Hihat'] = False
+
+            Drum['Channel1'] = 0
+            Drum['Channel2'] = 0
+            Drum['Channel3'] = 0
+
+            Drum['CenterGhostNoteThreshold'] = 0
+            Drum['CenterSlamNoteThreshold'] = 0
+
+            Drum['RimGhostNoteThreshold'] = 0
+            Drum['RimSlamNoteThreshold'] = 0
+
+            Drum['BellGhostNoteThreshold'] = 0
+            Drum['BellSlamNoteThreshold'] = 0
+
+            Drum['CenterVolume'] = 0
+            Drum['RimVolume'] = 0
+            Drum['BellVolume'] = 0
+
+            Drum['CenterMidiInput'] = None
+            Drum['RimMidInput'] = None
+            Drum['BellMidInput'] = None
+
+            Drum['CenterKeyOutput'] = None
+            Drum['RimKeyOutput'] = None
+            Drum['BellKeyOutput'] = None
+            
+            Drum['CenterSoundFilePath'] = None
+            Drum['RimSoundFilePath'] = None
+            Drum['BellSoundFilePath'] = None
+
+            Drum['KickDrumMinimumVelocity'] = None
+
+            Drum['HiHatClosedThreshold'] = 0
+            Drum['HiHatHalfThreshold'] = 0
+            Drum['HiHatOpenThreshold'] = 0
+            Drum['HiHatClosedPath'] = None
+            Drum['HiHatHalfPath'] = None
+            Drum['HiHatOpenPath'] = None
+            Drum['HiHatStompPath'] = None
+            Drum['HiHatBellOpenPath'] = None
+            Drum['HiHatBellClosedPath'] = None
+            Drum['HiHatClosedVolume'] = 0
+            Drum['HiHatHalfVolume'] = 0
+            Drum['HiHatOpenVolume'] = 0
+            Drum['HiHatStompVolume'] = 0
+            Drum['HiHatBellOpenVolume'] = 0
+            Drum['HiHatBellCloseVolume'] = 0
+
+
+
+        DrumRowDrumVar = tk.BooleanVar(value=Drum.get("Drum", False))
+        DrumRowCymbalVar = tk.BooleanVar(value=Drum.get("Cymbal", False))
+        DrumRowKickVar = tk.BooleanVar(value=Drum.get("Kick", False))
+        DrumRowHihatVar = tk.BooleanVar(value=Drum.get("Hihat", False))
+
+        MainDrumRowToggles = tk.Frame(MainDrumFrame)
+        MainDrumRowToggles.grid(row=0, column=0, sticky="ew", padx=2)
+        MainDrumRowToggles.columnconfigure(0, weight=1)
+        MainDrumRowToggles.columnconfigure(1, weight=1)
+        MainDrumRowToggles.columnconfigure(2, weight=1)
+        MainDrumRowToggles.columnconfigure(3, weight=1)
+        MainDrumRowToggles.columnconfigure(4, weight=1)
+        MainDrumRowToggles.rowconfigure(0, weight=1)
+
+        DrumRowDrumRow = tk.Frame(MainDrumFrame)
+        DrumRowDrumRow.grid(row=0, column=0, sticky="ew", padx=2)
+        DrumRowDrumRow.grid_forget()
+
+        DrumRowCymbalRow = tk.Frame(MainDrumFrame)
+        DrumRowCymbalRow.grid(row=0, column=0, sticky="ew", padx=2)
+        DrumRowCymbalRow.grid_forget()
+
+        DrumRowKickRow = tk.Frame(MainDrumFrame)
+        DrumRowKickRow.grid(row=0, column=0, sticky="ew", padx=2)
+        DrumRowKickRow.grid_forget()
+
+        DrumRowHihatRow = tk.Frame(MainDrumFrame)
+        DrumRowHihatRow.grid(row=0, column=0, sticky="ew", padx=2)
+        DrumRowHihatRow.grid_forget()
+
+        def RemoveDrum(Drum):
+            Drum = {}
             SaveConfig()
 
-    Dropdown.bind("<<ComboboxSelected>>", OnDeviceChange)
+        def SwitchDrumType(Which):
+            MainDrumRowToggles.grid_forget()
+            DrumRowDrumRow.grid_forget()
+            DrumRowCymbalRow.grid_forget()
+            DrumRowKickRow.grid_forget()
+            DrumRowHihatRow.grid_forget()
+            Drum['Drum'] = False
+            Drum['Cymbal'] = False
+            Drum['Kick'] = False
+            Drum['Hihat'] = False
+            DrumRowDrumVar.set(False)
+            DrumRowCymbalVar.set(False)
+            DrumRowKickVar.set(False)
+            DrumRowHihatVar.set(False)
+            DrumRowDrumRowVar = True
+            DrumRowCymbalVar = True
+            DrumRowKickVar = True
+            DrumRowHihatVar = True
 
-    NoteButton = tk.Button(Frame, text=str(Row["Note"]) if Row["Note"] != -1 else "Set Midi",
-                           command=lambda: DetectNote(NoteButton, DevVar.get(), Row))
-    NoteButton.grid(row=0, column=2, padx=3, sticky="ew")
+            if Which == "Drum":
+                print("it's firing lol")
+                DrumRowDrumRow.grid(row=0, column=0, sticky="ew", padx=2)
+                DrumRowDrumRow.columnconfigure(0, weight=1)
+                DrumRowDrumRow.rowconfigure(0, weight=1)
+                DrumRowDrumRow.rowconfigure(1, weight=0)
+                DrumRowDrumRow.rowconfigure(2, weight=0)
+                Drum['Drum'] = True
+            elif Which == "Cymbal":
+                DrumRowCymbalRow.grid(row=0, column=0, sticky="ew", padx=2)
+                Drum['Cymbal'] = True
+            elif Which == "Kick":
+                DrumRowKickRow.grid(row=0, column=0, sticky="ew", padx=2)
+                Drum['Kick'] = True
+            elif Which == "Hihat":
+                DrumRowHihatRow.grid(row=0, column=0, sticky="ew", padx=2)
+                Drum['Hihat'] = True
+            elif Which == "Main":
+                MainDrumRowToggles.grid(row=0, column=0, sticky="ew", padx=2)
 
-    KeyButton = tk.Button(Frame, width=40,
-                          text="+".join(FormatKeyName(K) for K in Row["Key"]) if Row["Key"] else "Set Key",
-                          command=lambda: DetectKey(KeyButton, Row))
-    KeyButton.grid(row=0, column=3, padx=3, sticky="ew")
+            channels = []
+            for i in range(128):
+                channels.append(i)
+
+            def UpdateChannel(*args):
+                Drum['Channel1'] = Channel1.get()
+                SaveConfig()
+
+            Channel1 = tk.IntVar(value=Drum['Channel1'])
+            Channel2 = tk.IntVar(value=Drum['Channel2'])
+            Channel3 = tk.IntVar(value=Drum['Channel3'])
+
+            Channel1.trace_add("write", UpdateChannel)
+            Channel2.trace_add("write", UpdateChannel)
+            Channel3.trace_add("write", UpdateChannel)
+
+            #--- Drums. Basic Drum Row
+            
+            DrumRowDrumRowVar = tk.BooleanVar(value=True)
+
+            #------ TopRow
+            DrumRowTopRow = tk.Frame(DrumRowDrumRow)
+            DrumRowTopRow.grid(row=0, column=0, sticky="ew", padx=2)
+
+            DrumRowTopRow.columnconfigure(0, weight=0 )
+            DrumRowTopRow.columnconfigure(1, weight=0 )
+            DrumRowTopRow.columnconfigure(2, weight=0 )
+            DrumRowTopRow.columnconfigure(3, weight=0 )
+            DrumRowTopRow.columnconfigure(4, weight=0 )
+            DrumRowTopRow.rowconfigure(0, weight=0 )
+
+            DrumRowDrumToMainToggle = tk.Checkbutton(DrumRowTopRow, text="Drum?", variable=DrumRowDrumRowVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowDrumToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
+
+            DrumRowChannelsLabel= tk.Label(DrumRowTopRow, text="Channels:")
+            DrumRowChannelsLabel.grid(row=0, column=1, sticky="ew", padx=2)
+
+            DrumRowDrumChannel1 = ttk.Combobox(DrumRowTopRow, textvariable=Channel1, state="readonly",values=channels)
+            DrumRowDrumChannel1.grid(row=0, column=2, padx=2)
+            DrumRowDrumChannel2 = ttk.Combobox(DrumRowTopRow, textvariable=Channel2, state="readonly",values=channels)
+            DrumRowDrumChannel2.grid(row=0, column=3, padx=2)
+            DrumRowDrumChannel3 = ttk.Combobox(DrumRowTopRow, textvariable=Channel3, state="readonly",values=channels)
+            DrumRowDrumChannel3.grid(row=0, column=4, padx=2)
+
+            RemoveDrumObjectFromList= tk.Button(DrumRowTopRow, text="Remove Drum?", command=lambda:RemoveDrum(Drum))
+            RemoveDrumObjectFromList.grid(row=0, column=5, sticky="ew", padx=2)
+            #------------ CenterRow
+            DrumRowCenterPad = tk.Frame(DrumRowDrumRow, bd=2, relief="solid")
+            DrumRowCenterPad.grid(row=1, column=0, sticky="ew", padx=2)
+            DrumRowCenterPad.rowconfigure(0, weight=0)
+            DrumRowCenterPad.rowconfigure(1, weight=0)
+            DrumRowCenterPad.rowconfigure(2, weight=0)
+            DrumRowCenterPad.columnconfigure(0, weight=0)
+            DrumRowCenterPad.columnconfigure(1, weight=1)
+            DrumRowCenterPad.columnconfigure(2, weight=0)
+            DrumRowCenterPad.columnconfigure(3, weight=0)
+            DrumRowCenterPad.columnconfigure(4, weight=0)
+            DrumRowCenterPad.columnconfigure(5, weight=0)
+            DrumRowCenterPad.columnconfigure(6, weight=1)
+            DrumRowCenterPad.columnconfigure(7, weight=0)
+
+            DrumRowCenterSoundLocationVar = tk.StringVar(value= Drum.get("CenterSoundFilePath", ""))
+            CenterVolumeVar = tk.IntVar(value=Drum.get("CenterVolume", 100))
+            CenterGhostNote = tk.IntVar(value=Drum.get("CenterGhostNoteThreshold", 100))
+            CenterSlam= tk.IntVar(value=Drum.get("CenterSlamNoteThreshold", 100))
+
+            DrumRowCenterLabel = tk.Label(DrumRowCenterPad, text= "Center:")
+            DrumRowCenterLabel.grid(row=0, column=0, sticky="ew")
+
+            DrumRowCenterBrowseButton = tk.Button(DrumRowCenterPad, command=lambda: SearchForSoundFile(Drum ,DrumRowCenterSoundLocationVar ), text="Browse", width=8)
+            DrumRowCenterBrowseButton.grid(row=0, column=1, sticky="ew")
+
+            DrumRowCenterSoundLocationIF = tk.Entry(DrumRowCenterPad, textvariable=DrumRowCenterSoundLocationVar, state="readonly")
+            DrumRowCenterSoundLocationIF.grid(row=0, column=2, sticky="ew")
+
+            DrumRowCenterVolumeSlider = tk.Scale(DrumRowCenterPad,from_=0,to=100,orient="horizontal",variable=CenterVolumeVar,showvalue=False)
+            DrumRowCenterVolumeSlider.grid(row=0, column=3, sticky="ew")
+
+            DrumRowCenterVolumeLabel = tk.Label(DrumRowCenterPad, text= "Volume:")
+            DrumRowCenterVolumeLabel.grid(row=0, column=4, sticky="ew")
+            DrumRowCenterVolumeShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterVolumeVar)
+            DrumRowCenterVolumeShowLabel.grid(row=0, column=5, sticky="w")
+
+            DrumRowCenterMidiInputButton = tk.Button(DrumRowCenterPad,text=str(Drum.get("CenterMidiInput", "Set Midi")),command=lambda: DetectNote(DrumRowCenterMidiInputButton,Row["Device"],Drum, "CenterMidiInput"))
+            DrumRowCenterMidiInputButton.grid(row=0, column=6, sticky="ew")
+
+            DrumRowcenterKeyOutputButton = tk.Button(DrumRowCenterPad,text="+".join(Drum.get("CenterKeyOutput", [])) or "Set Key",command=lambda: DetectKey(DrumRowcenterKeyOutputButton,Drum, "CenterKeyOutput"))
+            DrumRowcenterKeyOutputButton.grid(row=0, column=7, sticky="ew")
+
+            def UpdateCenterVolume(*args):
+                Drum["CenterVolume"] = CenterVolumeVar.get()
+                SaveConfig()
+
+            CenterVolumeVar.trace_add("write",UpdateCenterVolume)
+
+            def UpdateCenterGhost(*args):
+                Drum["CenterGhostNoteThreshold"] = CenterGhostNote.get()
+                SaveConfig()
+
+            CenterGhostNote.trace_add("write",UpdateCenterGhost)
+
+            def UpdateCenterSlam(*args):
+                Drum["CenterSlamNoteThreshold"] = CenterSlam.get()
+                SaveConfig()
+
+            CenterSlam.trace_add("write",UpdateCenterSlam)
+
+            DrumRowCenterGhostSlider = tk.Scale(DrumRowCenterPad,from_=1,to=127,orient="horizontal",variable=CenterGhostNote,showvalue=False)
+            DrumRowCenterGhostSlider.grid(row=1, column=3, sticky="ew")
+            DrumRowCenterGhostLabel = tk.Label(DrumRowCenterPad, text= "Ghost Note Velocity:")
+            DrumRowCenterGhostLabel.grid(row=1, column=4, sticky="ew")
+            DrumRowCenterGhostShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterGhostNote)
+            DrumRowCenterGhostShowLabel.grid(row=1, column=5, sticky="w")
+
+            DrumRowCenterSlamSlider = tk.Scale(DrumRowCenterPad,from_=1,to=127,orient="horizontal",variable=CenterSlam,showvalue=False)
+            DrumRowCenterSlamSlider.grid(row=2, column=3, sticky="ew")
+            DrumRowCenterSlamLabel = tk.Label(DrumRowCenterPad, text= "Slam Note Velocity:")
+            DrumRowCenterSlamLabel.grid(row=2, column=4, sticky="ew")
+            DrumRowCenterSlamShowLabel = tk.Label(DrumRowCenterPad,textvariable=CenterSlam)
+            DrumRowCenterSlamShowLabel.grid(row=2, column=5, sticky="w")
+            #------------ RimRow
+            DrumRowRimPad = tk.Frame(DrumRowDrumRow, bd=2, relief="solid")
+            DrumRowRimPad.grid(row=2, column=0, sticky="ew", padx=2)
+
+            DrumRowRimPad.rowconfigure(0, weight=0)
+            DrumRowRimPad.rowconfigure(1, weight=0)
+            DrumRowRimPad.rowconfigure(2, weight=0)
+
+            DrumRowRimPad.columnconfigure(0, weight=0)
+            DrumRowRimPad.columnconfigure(1, weight=1)
+            DrumRowRimPad.columnconfigure(2, weight=0)
+            DrumRowRimPad.columnconfigure(3, weight=0)
+            DrumRowRimPad.columnconfigure(4, weight=0)
+            DrumRowRimPad.columnconfigure(5, weight=0)
+            DrumRowRimPad.columnconfigure(6, weight=1)
+            DrumRowRimPad.columnconfigure(7, weight=0)
+
+            DrumRowRimSoundLocationVar = tk.StringVar(value=Drum.get("RimSoundFilePath", ""))
+            RimVolumeVar = tk.IntVar(value=Drum.get("RimVolume", 100))
+            RimGhostNote = tk.IntVar(value=Drum.get("RimGhostNoteThreshold", 100))
+            RimSlam = tk.IntVar(value=Drum.get("RimSlamNoteThreshold", 100))
+            DrumRowRimLabel = tk.Label(DrumRowRimPad,text="Rim:")
+            DrumRowRimLabel.grid(row=0,column=0,sticky="ew")
+            DrumRowRimBrowseButton = tk.Button(DrumRowRimPad,command=lambda: SearchForSoundFile(Drum,DrumRowRimSoundLocationVar),text="Browse",width=8)
+            DrumRowRimBrowseButton.grid(row=0,column=1,sticky="ew")
+            DrumRowRimSoundLocationIF = tk.Entry(DrumRowRimPad,textvariable=DrumRowRimSoundLocationVar,state="readonly")
+            DrumRowRimSoundLocationIF.grid(row=0,column=2,sticky="ew")
+            DrumRowRimVolumeSlider = tk.Scale(DrumRowRimPad,from_=0,to=100,orient="horizontal",variable=RimVolumeVar,showvalue=False)
+            DrumRowRimVolumeSlider.grid(row=0,column=3,sticky="ew")
+            DrumRowRimVolumeLabel = tk.Label(DrumRowRimPad,text="Volume:")
+            DrumRowRimVolumeLabel.grid(row=0,column=4,sticky="ew")
+            DrumRowRimVolumeShowLabel = tk.Label(DrumRowRimPad,textvariable=RimVolumeVar)
+            DrumRowRimVolumeShowLabel.grid(row=0,column=5,sticky="w")
+            DrumRowRimMidiInputButton = tk.Button(DrumRowRimPad,text=str(Drum.get("RimMidiInput", "Set Midi")),command=lambda: DetectNote(DrumRowRimMidiInputButton,Row["Device"],Drum,"RimMidiInput"))
+            DrumRowRimMidiInputButton.grid(row=0,column=6,sticky="ew")
+            DrumRowRimKeyOutputButton = tk.Button(DrumRowRimPad,text="+".join(Drum.get("RimKeyOutput", [])) or "Set Key",command=lambda: DetectKey(DrumRowRimKeyOutputButton,Drum,"RimKeyOutput"))
+            DrumRowRimKeyOutputButton.grid(row=0,column=7,sticky="ew")
+
+            def UpdateRimVolume(*args):
+                Drum["RimVolume"] = RimVolumeVar.get()
+                SaveConfig()
+
+            RimVolumeVar.trace_add("write",UpdateRimVolume)
+
+            def UpdateRimGhost(*args):
+                Drum["RimGhostNoteThreshold"] = RimGhostNote.get()
+                SaveConfig()
+
+            RimGhostNote.trace_add("write",UpdateRimGhost)
+
+            def UpdateRimSlam(*args):
+                Drum["RimSlamNoteThreshold"] = RimSlam.get()
+                SaveConfig()
+
+            RimSlam.trace_add("write",UpdateRimSlam)
+            DrumRowRimGhostSlider = tk.Scale(DrumRowRimPad,from_=1,to=127,orient="horizontal",variable=RimGhostNote,showvalue=False)
+            DrumRowRimGhostSlider.grid(row=1,column=3,sticky="ew")
+            DrumRowRimGhostLabel = tk.Label(DrumRowRimPad,text="Ghost Note Velocity:")
+            DrumRowRimGhostLabel.grid(row=1,column=4,sticky="ew")
+            DrumRowRimGhostShowLabel = tk.Label(DrumRowRimPad,textvariable=RimGhostNote)
+            DrumRowRimGhostShowLabel.grid(row=1,column=5,sticky="w")
+            DrumRowRimSlamSlider = tk.Scale(DrumRowRimPad,from_=1,to=127,orient="horizontal",variable=RimSlam,showvalue=False)
+            DrumRowRimSlamSlider.grid(row=2,column=3,sticky="ew")
+            DrumRowRimSlamLabel = tk.Label(DrumRowRimPad,text="Slam Note Velocity:")
+            DrumRowRimSlamLabel.grid(row=2,column=4,sticky="ew")
+            DrumRowRimSlamShowLabel = tk.Label(DrumRowRimPad,textvariable=RimSlam)
+            DrumRowRimSlamShowLabel.grid(row=2,column=5,sticky="w")
+            
+            #--- Drums, Cymbal Row
+            DrumRowCymbalVar = tk.BooleanVar(value=True)
+
+            DrumRowCymbalToMainToggle = tk.Checkbutton(DrumRowCymbalRow, text="Cymbal?", variable=DrumRowCymbalVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowCymbalToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
+
+            #--- Drums, Kick Row
+            DrumRowKickVar = tk.BooleanVar(value=True)
+
+            DrumRowKickToMainToggle = tk.Checkbutton(DrumRowKickRow, text="Kick?", variable=DrumRowKickVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowKickToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
+
+            #--- Drums, HiHat Row
+            DrumRowKickVar = tk.BooleanVar(value=True)
+
+            DrumRowHihatToMainToggle = tk.Checkbutton(DrumRowDrumRow, text="Hihat?", variable=DrumRowKickVar, command=lambda:SwitchDrumType("Main"))
+            DrumRowHihatToMainToggle.grid(row=0, column=0, sticky="ew", padx=2)
+
+            SaveConfig()
+
+        DrumRowDrumToggle = tk.Checkbutton(MainDrumRowToggles, text="Drum?", variable=DrumRowDrumVar, command=lambda:SwitchDrumType("Drum"))
+        DrumRowDrumToggle.grid(row=0, column=0, sticky="ew", padx=2)
+        DrumRowCymbalToggle = tk.Checkbutton(MainDrumRowToggles, text="Cymbal?", variable=DrumRowCymbalVar, command=lambda: SwitchDrumType("Cymbal"))
+        DrumRowCymbalToggle.grid(row=0, column=1, sticky="ew", padx=2)
+        DrumRowKickToggle = tk.Checkbutton(MainDrumRowToggles, text="Kick?", variable=DrumRowKickVar, command=lambda: SwitchDrumType("Kick"))
+        DrumRowKickToggle.grid(row=0, column=2, sticky="ew", padx=2)
+        DrumRowHihatToggle = tk.Checkbutton(MainDrumRowToggles, text="Hihat?", variable=DrumRowHihatVar, command=lambda: SwitchDrumType("Hihat"))
+        DrumRowHihatToggle.grid(row=0, column=3, sticky="ew", padx=2)
+        RemoveDrumObjectFromListMainDrum = tk.Button(MainDrumRowToggles, text="Remove Drum", command=lambda:RemoveDrum(Drum))
+        RemoveDrumObjectFromListMainDrum.grid(row=0, column=4, sticky="ew", padx=2)
+    
+    AddDrumObjectToList = tk.Button(DrumRow, text="Add Drum", command=lambda:AddDrumToList())
+    AddDrumObjectToList.grid(row=0, column=0, sticky="ew", padx=2)
+
+    
+
 
     MidiRows.append(Row)
 
     if not Loading:
-            SaveConfig()
+        SaveConfig()
+    else:
 
-def RemoveRow(Frame, Row):
+
+
+        if Row['Drums']:
+            HideToggleRowShowOtherRow("Drums")
+            for drum in Row['DrumList']:
+                AddDrumToList(drum, True)
+        elif Row['Keyboard']:
+            HideToggleRowShowOtherRow("Keyboard")
+        elif Row['Controller']:
+            HideToggleRowShowOtherRow("Controller")
+        elif Row['Advanced']:
+            HideToggleRowShowOtherRow("Advanced")
+        
+
+def RemoveMidiRow(Frame, Row):
     Frame.destroy()
     MidiRows.remove(Row)
     SaveConfig()
@@ -4244,95 +5014,75 @@ def GetGitHubRepo(Path):
 #This is probably what you're looking for vex.
 def AddRepoObject(Repo):
     global RepoBoxes
-    Frame = tk.LabelFrame(NullGitcontainer, text= Repo['Name'], bd=2, relief="solid")
+    Frame = tk.LabelFrame(NullGitcontainer, text=Repo["Name"], bd=2, relief="solid")
     Frame.pack(fill="x", padx=5, pady=5)
     Frame.columnconfigure(0, weight=0)
     Frame.columnconfigure(1, weight=2)
     Frame.columnconfigure(2, weight=0)
-
-    Frame.rowconfigure(0, weight=0)
-    Frame.rowconfigure(1, weight=0)
-    Frame.rowconfigure(2, weight=0)
-    Frame.rowconfigure(3, weight=0)
-    Frame.rowconfigure(4, weight=0)
-    Frame.rowconfigure(5, weight=0)
-    Frame.rowconfigure(6, weight=0)
-    Frame.rowconfigure(7, weight=0)
-    Frame.rowconfigure(8, weight=0)
+    for i in range(9):
+        Frame.rowconfigure(i, weight=0)
 
     StatusVar = tk.StringVar()
     Branches = GetBranches(Repo["Path"])
     RepoOptions = []
+
     for Branch in Branches:
-        RepoOptions.append({"Label": f"{Branch} [Branch]","Type": "Branch","Value": Branch})
+        RepoOptions.append({"Label": f"{Branch} [Branch]", "Type": "Branch", "Value": Branch})
 
-    RepoOptions.append({"Label": "Latest [Release]","Type": "Release","Value": "latest"})
-
+    try:
+        RepoName = GetGitHubRepo(Repo["Path"])
+        if RepoName:
+            Result = subprocess.run(["curl", "-s", f"https://api.github.com/repos/{RepoName}/releases/latest"], capture_output=True, text=True, check=True)
+            Data = json.loads(Result.stdout)
+            if (Data.get("tag_name") and isinstance(Data.get("assets"), list)and len(Data.get("assets")) > 0):
+                RepoOptions.append({"Label": "Latest [Release]", "Type": "Release", "Value": "latest"})
+    except:
+        pass
     DisplayValues = [x["Label"] for x in RepoOptions]
-
+    SavedBranch = Repo.get("CurrentBranch", f"{GetCurrentBranch(Repo['Path'])} [Branch]")
+    CurrentBranch = tk.StringVar(value=SavedBranch)
+    Repo["CurrentBranch"] = SavedBranch
     def OnRepoOptionChanged():
         Selected = CurrentBranch.get()
-
-        Match = next(
-            (
-                x
-                for x in RepoOptions
-                if x["Label"] == Selected
-            ),
-            None
-        )
+        Match = next((x for x in RepoOptions if x["Label"] == Selected), None)
         if not Match:
             return
         Repo["CurrentBranch"] = Match["Label"]
-
         if Match["Type"] == "Branch":
-            ChangeBranch(Repo,Match["Value"],StatusVar)
-            
+            ChangeBranch(Repo, Match["Value"], StatusVar)
         StatusVar.set(GetRepoStatus(Repo))
         SaveConfig()
+        Frame.focus_set()
 
-    CurrentBranch = tk.StringVar()
-    CurrentBranch.set(
-    Repo.get("CurrentBranch",f"{GetCurrentBranch(Repo['Path'])} [Branch]"))
-    Repo["CurrentBranch"] = CurrentBranch.get()
-
-    BranchBox = ttk.Combobox(Frame,values=DisplayValues,textvariable=CurrentBranch,state="readonly")
+    BranchBox = ttk.Combobox(Frame, values=DisplayValues, textvariable=CurrentBranch, state="readonly")
     BranchBox.grid(row=0, column=1, sticky="ew")
-    BranchBox.bind("<<ComboboxSelected>>",lambda e: OnRepoOptionChanged())
-    tk.Button(Frame, text="Pull Repo",width= 10, command=lambda: PullRepo(Repo,StatusVar)).grid(row=0, column=2,columnspan=3)
-    ttk.Separator(Frame, orient="horizontal").grid(row=1, column=0, sticky="ew",columnspan=3, pady=6)
-
+    BranchBox.bind("<<ComboboxSelected>>", lambda e: OnRepoOptionChanged())
+    tk.Button(Frame, text="Pull Repo", width=10, command=lambda: PullRepo(Repo, StatusVar)).grid(row=0, column=2, columnspan=3)
+    ttk.Separator(Frame, orient="horizontal").grid(row=1, column=0, sticky="ew", columnspan=3, pady=6)
     StatusVar.set(GetRepoStatus(Repo))
-    StatusLabel = tk.Label(Frame,textvariable=StatusVar, width= 15, padx=5)
+    StatusLabel = tk.Label(Frame, textvariable=StatusVar, width=15, padx=5)
     StatusLabel.grid(row=0, column=0, sticky="ew")
     CommitMessage = tk.StringVar()
-
-    CommitMessageShow = tk.Label(Frame,text="Commit Message:", width= 15, padx=5)
+    CommitMessageShow = tk.Label(Frame, text="Commit Message:", width=15, padx=5)
     CommitMessageShow.grid(row=2, column=0, sticky="ew")
-    tk.Entry(Frame,width=30,textvariable=CommitMessage).grid(row=2, column=1, sticky="ew", padx=5)
-    tk.Button(Frame, text="Push Repo", width= 10, command=lambda: PushGit(Repo,CommitMessage,StatusVar)).grid(row=2, column=2, padx=5)
-
-    ttk.Separator(Frame, orient="horizontal").grid(row=3, column=0, sticky="ew",columnspan=3, pady=6)
-
-    innerframe = tk.Frame(Frame)
-    innerframe.grid(row=4, column=1, sticky="ew", padx=5, pady=2)
-    innerframe.columnconfigure(0, weight=1)
-    innerframe.columnconfigure(1, weight=1)
-
-    tk.Button(innerframe, text="Open Repo In Browser", command=lambda:OpenRepo(Repo, False)).grid(row=0, column=0, sticky="ew", padx=5, pady=2)
-    tk.Button(innerframe, text="Open Repo Location", command=lambda:OpenRepo(Repo,True)).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-    
-    ttk.Separator(Frame, orient="horizontal").grid(row=5, column=0, sticky="ew",columnspan=3, pady=6)
-    if Repo['Owner']:
-        
-        tk.Button(Frame, text="Manage Repo", command=lambda: ManageRepo(Repo)).grid(row=6, column=0,columnspan=3, sticky="ew", padx=5)
+    CommitEntry = tk.Entry(Frame, width=30, textvariable=CommitMessage)
+    CommitEntry.grid(row=2, column=1, sticky="ew", padx=5)
+    tk.Button(Frame, text="Push Repo", width=10, command=lambda: PushGit(Repo, CommitMessage, StatusVar)).grid(row=2, column=2, padx=5)
+    ttk.Separator(Frame, orient="horizontal").grid(row=3, column=0, sticky="ew", columnspan=3, pady=6)
+    InnerFrame = tk.Frame(Frame)
+    InnerFrame.grid(row=4, column=1, sticky="ew", padx=5, pady=2)
+    InnerFrame.columnconfigure(0, weight=1)
+    InnerFrame.columnconfigure(1, weight=1)
+    tk.Button(InnerFrame, text="Open Repo In Browser", command=lambda: OpenRepo(Repo, False)).grid(row=0, column=0, sticky="ew", padx=5, pady=2)
+    tk.Button(InnerFrame, text="Open Repo Location", command=lambda: OpenRepo(Repo, True)).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+    ttk.Separator(Frame, orient="horizontal").grid(row=5, column=0, sticky="ew", columnspan=3, pady=6)
+    if Repo["Owner"]:
+        tk.Button(Frame, text="Manage Repo", command=lambda: ManageRepo(Repo)).grid(row=6, column=0, columnspan=3, sticky="ew", padx=5)
     else:
-        tk.Button(Frame, text="Delete Repo From NullGit", command=lambda:DeleteRepoInNull(Repo)).grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
-
+        tk.Button(Frame, text="Delete Repo From NullGit", command=lambda: DeleteRepoInNull(Repo)).grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
     RepoBoxes.append(Frame)
-    return
-
+    
 def BuildRepoList():
     global RepoBoxes
 
@@ -4467,6 +5217,14 @@ def CreateBranchOnGit():
         messagebox.showinfo(
             "Branch Created",
             f"Created branch:\n{Branch}"
+        )
+
+        subprocess.run(
+        ["git", "push", "--set-upstream", "origin", Branch],
+        cwd=Path,
+        check=True,
+        capture_output=True,
+        text=True
         )
         SaveConfig()
         BuildRepoList()
@@ -4611,25 +5369,87 @@ def CreateGitIgnoreFile():
         )
 
 def EditGitIgnoreFile():
+
+    Popup = tk.Toplevel(Root)
+    Popup.title("Edit .gitignore")
+    Popup.resizable(False, False)
+
+    Popup.transient(Root)
+    Popup.grab_set()
+
+    Frame = tk.Frame(Popup)
+    Frame.pack(padx=10, pady=10)
+
+    tk.Label(
+        Frame,
+        text="What do you want to ignore?"
+    ).pack(fill="x", pady=(0, 10))
+
+    tk.Button(
+        Frame,
+        text="Select File",
+        command=lambda: SelectGitIgnore(
+            "file",
+            Popup
+        )
+    ).pack(fill="x", pady=3)
+
+    tk.Button(
+        Frame,
+        text="Select Folder",
+        command=lambda: SelectGitIgnore(
+            "folder",
+            Popup
+        )
+    ).pack(fill="x", pady=3)
+
+def SelectGitIgnore(Type, Popup):
+
+    Popup.destroy()
+
     if not CurrentManagedRepo:
         return
+
     RepoPath = CurrentManagedRepo["Path"]
-    SelectedPath = filedialog.askopenfilename(initialdir=RepoPath)
+
+    if Type == "file":
+
+        SelectedPath = filedialog.askopenfilename(
+            initialdir=RepoPath
+        )
+
+    else:
+
+        SelectedPath = filedialog.askdirectory(
+            initialdir=RepoPath
+        )
+
     if not SelectedPath:
         return
+
     try:
+
         GitIgnorePath = os.path.join(
             RepoPath,
             ".gitignore"
         )
+
         RelativePath = os.path.relpath(
             SelectedPath,
             RepoPath
         )
+
         RelativePath = "/" + RelativePath.replace("\\", "/")
+
+        if os.path.isdir(SelectedPath):
+            RelativePath += "/"
+
         Lines = []
+
         if os.path.exists(GitIgnorePath):
+
             with open(GitIgnorePath, "r") as File:
+
                 Lines = [
                     Line.strip()
                     for Line in File.readlines()
@@ -4637,40 +5457,62 @@ def EditGitIgnoreFile():
                 ]
 
         if RelativePath in Lines:
+
+            # ------------------------------
+            # Remove ignore
+            # ------------------------------
             Lines.remove(RelativePath)
+
             subprocess.run(
                 [
                     "git",
                     "add",
-                    RelativePath.lstrip("/")
+                    RelativePath.strip("/")
                 ],
                 cwd=RepoPath,
                 capture_output=True,
                 text=True
             )
+
         else:
+
+            # ------------------------------
+            # Add ignore
+            # ------------------------------
             Lines.append(RelativePath)
+
             subprocess.run(
                 [
                     "git",
                     "rm",
                     "--cached",
-                    RelativePath.lstrip("/")
+                    "-r",
+                    RelativePath.strip("/")
                 ],
                 cwd=RepoPath,
                 capture_output=True,
                 text=True
             )
+
+        Lines = sorted(set(Lines))
+
         with open(GitIgnorePath, "w") as File:
+
             File.write(
                 "\n".join(Lines)
             )
-        GitIgnoredVar.set("\n".join(Lines))
+
+        GitIgnoredVar.set(
+            "\n".join(Lines)
+        )
+
         if Lines:
             GitList.grid()
         else:
             GitList.grid_remove()
+
     except Exception as e:
+
         messagebox.showerror(
             "Edit .gitignore Failed",
             str(e)
@@ -4980,7 +5822,7 @@ TopBar.pack(fill="x", padx=5, pady=5)
 MidiScrollBox = ScrollableFrame(NullMidi)
 MidiScrollBox.pack(fill="both", expand=True)
 MidiContainer = MidiScrollBox.Inner
-tk.Button(TopBar, text="Add New Input", command=AddRow).pack(fill="x")
+tk.Button(TopBar, text="Add New Input", command=lambda: AddMidiRow(None)).pack(fill="x")
 ttk.Separator(NullMidi, orient="horizontal").pack(fill="both", pady=5)
 # ------------------------------
 # Null Rip UI
@@ -5406,14 +6248,7 @@ ForcePush.grid(row=0,column=1,sticky="ew",padx=5,pady=2, columnspan=2)
 # ==========================================================================================
 # Initializing
 # ==========================================================================================
-StartTime = time.time()
-LoadConfig()
-Elapsed = time.time() - StartTime
 
-if Elapsed < 1:
-    Delay = int((1 - Elapsed) * 1000)
-else:
-    Delay = 50
 
 def NullCursorLoop():
     global LastWarpTime, LastOutputs, LastInputs, LastSources
@@ -5514,6 +6349,38 @@ def NullWireLoop():
         
         time.sleep(1)
 
+def NullMidiLoop():
+    while True:
+
+        Ports = mido.get_input_names()
+
+        NeededDevices = set()
+
+        for Row in MidiRows:
+            if not Row.get("Active"):
+                continue
+
+            Device = Row.get("Device")
+
+            if not Device:
+                continue
+
+            if Device not in Ports:
+                continue
+
+            NeededDevices.add(Device)
+
+        for Device in NeededDevices:
+            if Device not in MidiDeviceListeners:
+                StartMidiListener(Device)
+
+        for Device in list(MidiDeviceListeners.keys()):
+            if Device not in NeededDevices:
+                StopMidiListener(Device)
+
+        time.sleep(1)
+
+
 def HideToTray():
     if SystemLoading:
         return
@@ -5525,11 +6392,21 @@ threading.Thread(target=StartTray, daemon=True).start()
 threading.Thread(target=RunUpdateCheck, daemon=True).start()
 threading.Thread(target=NullCursorLoop, daemon=True).start()
 threading.Thread(target=NullWireLoop, daemon=True).start()
-def FinishLoading():
-    global SystemLoading
 
-    SystemLoading = False
-    LoadPopup.destroy()
+def Startup():
+    global StartupDelay
+    LoadConfig()
+    StartupDelay +=3
 
-Root.after(Delay, FinishLoading)
+    def FinishLoading():
+        global SystemLoading 
+        SystemLoading = False 
+        LoadPopup.destroy()
+
+    Root.after(
+        StartupDelay,
+        FinishLoading
+    )
+
+Root.after(StartupDelay, Startup)
 Root.mainloop()
