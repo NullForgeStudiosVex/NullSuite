@@ -5445,6 +5445,22 @@ def DeleteBranchOnGit():
             capture_output=True,
             text=True
         )
+
+        DeleteRemote = messagebox.askyesno("Delete On Github Too?",f"Also delete '{Branch}' from GitHub?")
+        if DeleteRemote:
+            subprocess.run(
+            [
+                "git",
+                "push",
+                "origin",
+                "--delete",
+                Branch
+            ],
+            cwd=Path,
+            check=True,
+            capture_output=True,
+            text=True
+            )
         SaveConfig()
         BuildRepoList()
         NullGitNotebook.select(
