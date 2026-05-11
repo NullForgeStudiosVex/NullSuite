@@ -4705,7 +4705,7 @@ def OnNotebookChanged(event):
         CurrentManagedRepo = None
 
 def MergeBranch():
-    print("test")
+    
     global CurrentManagedRepo
     Path = CurrentManagedRepo["Path"]
     Branch = CurrentMergeBranch.get()
@@ -4718,9 +4718,7 @@ def MergeBranch():
             cwd=Path,
             check=True
         )
-
-
-
+        print(f"Successfully merged {CurrentManagedRepo['CurrentBranch']} with {Branch}")
     except Exception as e:
         print(f"Merge failed: {e}")
 
