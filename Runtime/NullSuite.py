@@ -4718,7 +4718,7 @@ def MergeBranch():
             cwd=Path,
             check=True
         )
-        print(f"Successfully merged {CurrentManagedRepo['CurrentBranch']} with {Branch}")
+        print(f"Successfully merged {Branch} with {CurrentManagedRepo['CurrentBranch']} ")
     except Exception as e:
         print(f"Merge failed: {e}")
 
@@ -6330,7 +6330,7 @@ tk.Button(BranchFrame, text="Rename Branch", width= 11, command=lambda:RenameBra
 tk.Button(BranchFrame, text="Delete Branch", command=lambda:DeleteBranchOnGit()).grid(row=1, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
 CurrentMergeBranch = tk.StringVar()
-MergeBranches = tk.Label(BranchFrame,text="Merge This Branch With:",font=("Arial", 12),justify="center")
+MergeBranches = tk.Label(BranchFrame,text="Merge this branch into current:",font=("Arial", 12),justify="center")
 MergeBranches.grid(row=2, column=0, sticky="ew", padx=5, pady=2)
 MergeBranchBox = ttk.Combobox(BranchFrame, values=[], textvariable=CurrentMergeBranch, state="readonly")
 MergeBranchBox.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
