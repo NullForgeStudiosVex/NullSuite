@@ -4704,6 +4704,25 @@ def OnNotebookChanged(event):
         global CurrentManagedRepo
         CurrentManagedRepo = None
 
+def MergeBranch():
+    global CurrentManagedRepo
+    Path = CurrentManagedRepo["Path"]
+    Branch = CurrentMergeBranch.get()
+    if not Branch:
+        return
+
+    try:
+        subprocess.run(
+            ["git", "merge", Branch],
+            cwd=Path,
+            check=True
+        )
+
+
+
+    except Exception as e:
+        print(f"Merge failed: {e}")
+
 def ManageRepo(Repo):
     global CurrentManagedRepo
     Path = Repo["Path"]
@@ -4763,10 +4782,29 @@ def ManageRepo(Repo):
     except:
         CommittedVar.set("")
 
+    try:
+        Result = subprocess.run(
+            ["git", "branch"],
+            cwd=Path,
+            capture_output=True,
+            text=True,
+            check=True
+        )
 
+        Branches = []
+
+        for B in Result.stdout.splitlines():
+
+            Clean = B.replace ("*", "").strip()
+            if Clean != CurrentManagedRepo["CurrentBranch"].replace(" [Branch]", ""):
+                Branches.append(Clean)
+
+        MergeBranchBox["values"] = Branches
+
+    except Exception as e:
+        print(e)
 
     NullGitNotebook.tab(NullGitManagePage,state="normal")
-
     NullGitNotebook.select(NullGitManagePage)
     return
 
@@ -5092,6 +5130,7 @@ def GetGitHubRepo(Path):
         return None
 
 #This is probably what you're looking for vex.
+#lmfao it was.
 def AddRepoObject(Repo):
     global RepoBoxes
     Frame = tk.LabelFrame(NullGitcontainer, text=Repo["Name"], bd=2, relief="solid")
@@ -5142,13 +5181,6 @@ def AddRepoObject(Repo):
     StatusVar.set(GetRepoStatus(Repo))
     StatusLabel = tk.Label(Frame, textvariable=StatusVar, width=15, padx=5)
     StatusLabel.grid(row=0, column=0, sticky="ew")
-    CommitMessage = tk.StringVar()
-    CommitMessageShow = tk.Label(Frame, text="Commit Message:", width=15, padx=5)
-    CommitMessageShow.grid(row=2, column=0, sticky="ew")
-    CommitEntry = tk.Entry(Frame, width=30, textvariable=CommitMessage)
-    CommitEntry.grid(row=2, column=1, sticky="ew", padx=5)
-    tk.Button(Frame, text="Push Repo", width=10, command=lambda: PushGit(Repo, CommitMessage, StatusVar)).grid(row=2, column=2, padx=5)
-    ttk.Separator(Frame, orient="horizontal").grid(row=3, column=0, sticky="ew", columnspan=3, pady=6)
     InnerFrame = tk.Frame(Frame)
     InnerFrame.grid(row=4, column=1, sticky="ew", padx=5, pady=2)
     InnerFrame.columnconfigure(0, weight=1)
@@ -5158,6 +5190,14 @@ def AddRepoObject(Repo):
     ttk.Separator(Frame, orient="horizontal").grid(row=5, column=0, sticky="ew", columnspan=3, pady=6)
     if Repo["Owner"]:
         tk.Button(Frame, text="Manage Repo", command=lambda: ManageRepo(Repo)).grid(row=6, column=0, columnspan=3, sticky="ew", padx=5)
+        #don't know why you'd need this for a repo you're not the owner of... lmfao. I was tired.
+        CommitMessage = tk.StringVar()
+        CommitMessageShow = tk.Label(Frame, text="Commit Message:", width=15, padx=5)
+        CommitMessageShow.grid(row=2, column=0, sticky="ew")
+        CommitEntry = tk.Entry(Frame, width=30, textvariable=CommitMessage)
+        CommitEntry.grid(row=2, column=1, sticky="ew", padx=5)
+        ttk.Separator(Frame, orient="horizontal").grid(row=3, column=0, sticky="ew", columnspan=3, pady=6)
+        tk.Button(Frame, text="Push Repo", width=10, command=lambda: PushGit(Repo, CommitMessage, StatusVar)).grid(row=2, column=2, padx=5)
     else:
         tk.Button(Frame, text="Delete Repo From NullGit", command=lambda: DeleteRepoInNull(Repo)).grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
@@ -6290,6 +6330,13 @@ tk.Entry(BranchFrame, textvariable=ManageBranchName).grid(row=0, column=1, stick
 tk.Button(BranchFrame, text="Rename Branch", width= 11, command=lambda:RenameBranchOnGit()).grid(row=0, column=2, sticky="ew", padx=5, pady=2)
 tk.Button(BranchFrame, text="Delete Branch", command=lambda:DeleteBranchOnGit()).grid(row=1, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
+CurrentMergeBranch = tk.StringVar()
+MergeBranches = tk.Label(BranchFrame,text="Merge This Branch With:",font=("Arial", 12),justify="center")
+MergeBranches.grid(row=2, column=0, sticky="ew", padx=5, pady=2)
+MergeBranchBox = ttk.Combobox(BranchFrame, values=[], textvariable=CurrentMergeBranch, state="readonly")
+MergeBranchBox.grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+MergeButton = tk.Button(BranchFrame,text="Merge", command=lambda:MergeBranch())
+MergeButton.grid(row=2,column=2,sticky="ew",padx=5,pady=2)
 
 CreateGitIgnoreButton = tk.Button(IgnoreFrame,text="Create .gitignore", command=lambda:CreateGitIgnoreFile())
 CreateGitIgnoreButton.grid(row=0,column=0,sticky="ew",padx=5,pady=2)
