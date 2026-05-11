@@ -4705,6 +4705,7 @@ def OnNotebookChanged(event):
         CurrentManagedRepo = None
 
 def MergeBranch():
+    print("test")
     global CurrentManagedRepo
     Path = CurrentManagedRepo["Path"]
     Branch = CurrentMergeBranch.get()
