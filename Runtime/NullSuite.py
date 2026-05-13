@@ -27,7 +27,7 @@ import pygame
 # ==========================================================================================
 SystemLoading = True
 StartUpDelay = 100 #if you're looking at this thinking "wtf why a delay?" because tkinter runs on 1 thread...trying to make it load everything, and generate UI, and fill the UI all in 1ms is....bad. so. delay. you wont notice it.
-Root = tk.Tk()
+Root = tk.Tk(className="NullSuite")
 Root.title("NullSuite")
 Root.geometry("1600x900")
 Main = tk.Frame(Root)
@@ -166,6 +166,7 @@ CurrentDownloadProcess = None
 # ————————————————————————————————————————————————————————————
 
 setproctitle.setproctitle("NullSuite")
+Root.title("NullSuite")
 UpdatePromptShown = False
 
 def GetRepoRoot():
@@ -531,7 +532,7 @@ def BringToFront():
     Root.after(50, lambda: Root.attributes("-topmost", False))
 
 def WatchShowSignal():
-    ShowPath = os.path.join(BaseDir, "Tools", "NullSuite.show")
+    ShowPath = os.path.join(BaseDir, "NullSuite.show")
 
     while True:
         if os.path.exists(ShowPath):

@@ -3,7 +3,7 @@
 BASE_DIR="$(dirname "$(realpath "$0")")"
 
 PYTHON="$BASE_DIR/venv/bin/python3"
-SHOW_FILE="$BASE_DIR/Tools/NullSuite.show"
+SHOW_FILE="$BASE_DIR/NullSuite.show"
 SCRIPT="$BASE_DIR/NullSuite.py"
 
 
