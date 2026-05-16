@@ -111,9 +111,22 @@ ActiveCapture = {
 }
 SoundQueue = Queue()
 pygame.mixer.init(buffer=256)
-pygame.mixer.set_num_channels(128)
-OverflowChannel = 33
+pygame.mixer.set_num_channels(384)
+CymbalChannelStart = 0
+CymbalChannelEnd = 127
+DrumChannelStart = 128
+DrumChannelEnd = 255
+OverflowChannelStart = 256
+OverflowChannelEnd = 383
 LastPedalValue = 100
+OverflowChannels = OverflowChannelStart
+DrumChannels = DrumChannelStart
+CymbalChannels = CymbalChannelStart
+PreviousPedalValue = 0
+HiHatPedalChoked = False
+LastHiHatState = "Open"
+NewHiHatState = "Open"
+HiHatHitHafClosedTime = time.time()
 # ------------------------------
 # NullWire
 # ------------------------------
@@ -271,11 +284,15 @@ def StartTray():
     Gtk.main()
 
 def GetSavableMidiRows():
-    global SaveRows
+
     SaveRows = []
+
     for Row in MidiRows:
+
         SaveRow = {}
+
         for Key, Value in Row.items():
+
             if Key in [
                 "VirtualPort",
                 "Frame",
@@ -283,8 +300,32 @@ def GetSavableMidiRows():
                 "Widgets"
             ]:
                 continue
-            SaveRow[Key] = Value
+
+            elif Key == "DrumList":
+
+                CleanDrums = []
+
+                for Drum in Value:
+
+                    CleanDrum = {}
+
+                    for DrumKey, DrumValue in Drum.items():
+
+                        if DrumKey == "Channels":
+                            CleanDrum[DrumKey] = []
+                            continue
+
+                        CleanDrum[DrumKey] = DrumValue
+
+                    CleanDrums.append(CleanDrum)
+
+                SaveRow[Key] = CleanDrums
+
+            else:
+                SaveRow[Key] = Value
+
         SaveRows.append(SaveRow)
+
     return SaveRows
 
 def LoadConfig():
@@ -3029,6 +3070,7 @@ def SoundPlayer():
             SoundPath = Data.get("Path")
             Volume = Data.get("Volume", 1.0)
             Loops = Data.get("Loops", 0)
+            FadeIn = Data.get("FadeIn", 0)
 
             if SoundPath is None:
                 continue
@@ -3045,7 +3087,7 @@ def SoundPlayer():
 
             MixerChannel.set_volume(Volume)
 
-            MixerChannel.play(Sound, loops=Loops)
+            MixerChannel.play(Sound, loops=Loops, fade_ms=FadeIn)
 
             threading.Thread(
                 target=CleanupChannel,
@@ -3399,7 +3441,8 @@ def StopMidiListener(Device):
     print(f"🛑 Stopped MIDI Listener: {Device}")
 
 def HandleMidiMessage(Device, msg):
-    global LastPedalValue
+    global LastPedalValue, PreviousPedalValue, HiHatPedalChoked, LastHiHatState, NewHiHatState, HiHatHitHafClosedTime
+
 
     for Row in MidiRows:
 
@@ -3413,8 +3456,55 @@ def HandleMidiMessage(Device, msg):
             if msg.type == "control_change":
                 if Row['Drums']:
                     if msg.control == 4:
+                        PreviousPedalValue = LastPedalValue
                         LastPedalValue = msg.value
-                    continue
+                        for Drum in Row['DrumList']:
+                            if not Drum['Hihat']:
+                                continue
+                            if not HiHatPedalChoked:
+                                if (PreviousPedalValue < Drum['HiHatClosedThreshold']and LastPedalValue >= Drum['HiHatClosedThreshold']):
+                                    print("PEDAL CHOKE")
+                                    HiHatPedalChoked = True
+                                    for ChannelID in Drum['Channels']:
+                                        pygame.mixer.Channel(ChannelID).fadeout(50)
+                                    Drum['Channels'].clear()
+                            else:
+                                if (LastPedalValue <= Drum['HiHatClosedThreshold'] -10):
+                                     HiHatPedalChoked = False
+
+                            if PreviousPedalValue <= Drum['HiHatOpenThreshold']:
+                                LastHiHatState = "Open"
+                            elif PreviousPedalValue > Drum['HiHatOpenThreshold'] and LastPedalValue < Drum['HiHatClosedThreshold']:
+                                LastHiHatState = "Half"
+                            elif PreviousPedalValue >= Drum['HiHatClosedThreshold']:
+                                LastHiHatState = "Closed"
+                            
+                            if LastPedalValue <= Drum['HiHatOpenThreshold']:
+                                NewHiHatState = "Open"
+                            elif LastPedalValue > Drum['HiHatOpenThreshold'] and LastPedalValue < Drum['HiHatClosedThreshold']:
+                                NewHiHatState = "Half"
+                            elif LastPedalValue >= Drum['HiHatClosedThreshold']:
+                                NewHiHatState = "Closed"
+
+                            
+                            if LastHiHatState in ['Closed', 'Half'] and NewHiHatState == "Open":
+                                print(time.time() - HiHatHitHafClosedTime, "Pedal changed this is the time")
+                                if (time.time() - HiHatHitHafClosedTime) <= Drum['HiHatOpenTime'] /1000:
+                                    for ChannelID in Drum['Channels']:
+                                        pygame.mixer.Channel(ChannelID).fadeout(50)
+                                    Drum['Channels'].clear()
+                                    UseThisChannel = GetPlaybackChannel("Hihat")
+                                    Drum['Channels'].append(UseThisChannel)
+
+                                    SoundQueue.put({
+                                    "Owner": Drum,
+                                    "Channel": UseThisChannel,
+                                    "Path": Drum['HiHatOpenPath'],
+                                    "Volume": Drum['HiHatOpenVolume'] / 100,
+                                    "FadeIn": Drum['HiHatFadeIn']
+                                    })
+                                    LastHiHatState = NewHiHatState
+                        continue
                 elif Row['Keyboard']:
                     continue
                 else:
@@ -3446,6 +3536,8 @@ def HandleMidiMessage(Device, msg):
                         Hit = ResolveDrumHit(Row,msg.note)
                         if not Hit:
                             continue
+                        if Hit['DrumType'] == None:
+                            continue
                         Drum = Hit['Drum']
                         PressKeyCombo(Hit["Keys"])
 
@@ -3454,6 +3546,21 @@ def HandleMidiMessage(Device, msg):
                         Drum = SoundData['Drum']
                         if not Drum:
                             continue
+                        
+                        if SoundData['Type'] == None:
+                            continue
+                        if SoundData['Type'] == "Hihat":
+                            
+                            if msg.note in [Drum['HiHatClosedMidiInput'], Drum['HiHatHalfMidiInput'], Drum['HiHatBellClosedMidiInput']]:
+                                HiHatHitHafClosedTime = time.time()
+                                print(HiHatHitHafClosedTime, "When I Hit the note")
+                            if msg.note == Drum['HiHatStompMidiInput']:
+                                for ChannelID in Drum['Channels']:
+                                    pygame.mixer.Channel(ChannelID).fadeout(50)
+                                Drum['Channels'].clear()
+
+
+
                         Velocity = msg.velocity
                         NormalizedVolume = 75
                         MinVolume = 0
@@ -3488,10 +3595,7 @@ def HandleMidiMessage(Device, msg):
 
                         NormalizedVolume /= 100
                         NormalizedVolume *= (SoundData['Volume'] / 100)
-                        UseThisChannel = (CheckAvailableChannels(Row))
-
-                        if UseThisChannel is None:
-                            continue
+                        UseThisChannel = GetPlaybackChannel(SoundData['Type'])
 
                         Drum["Channels"].append(
                             UseThisChannel
@@ -3502,7 +3606,8 @@ def HandleMidiMessage(Device, msg):
                             "Owner": Drum,
                             "Channel": UseThisChannel,
                             "Path": SoundData['SoundPath'],
-                            "Volume": NormalizedVolume
+                            "Volume": NormalizedVolume,
+                            "FadeIn": 0
 
                         })
 
@@ -3594,12 +3699,19 @@ def DetectNote(Button, Device, Target, Field, Timeout=5):
     Root.bind("<KeyRelease>", OnRelease)
     threading.Thread(target=Worker, daemon=True).start()
 
-AvailableChannels = list(range(0, 128))
-
 def ResolveDrumHit(Row, Note):
+
+    HitType = None
+    Keys = []
+    DrumHold = None
+    DrumType = None
+
     for Drum in Row['DrumList']:
 
         if Drum['Hihat']:
+
+            DrumType = "Hihat"
+
             if LastPedalValue <= Drum['HiHatClosedThreshold'] and LastPedalValue >= Drum['HiHatOpenThreshold']:
                 HiHatState = "Half"
 
@@ -3608,72 +3720,103 @@ def ResolveDrumHit(Row, Note):
 
             elif LastPedalValue <= Drum['HiHatOpenThreshold']:
                 HiHatState = "Open"
-            
+
             if HiHatState == "Closed":
+
                 if Drum['HiHatClosedMidiInput'] == Note:
-                    return {
-                        "Type": "HiHatClosed",
-                        "Keys": Drum['HiHatClosedKeyOutput'],
-                        "Drum": Drum
-                    }
+                    HitType = "HiHatClosed"
+                    Keys = Drum['HiHatClosedKeyOutput']
+                    DrumHold = Drum
+                    break
+
+                if Drum['HiHatHalfMidiInput'] == Note:
+                    HitType = "HiHatClosed"
+                    Keys = Drum['HiHatClosedKeyOutput']
+                    DrumHold = Drum
+                    break
+
+                elif Drum['HiHatBellOpenMidiInput'] == Note:
+                    HitType = "HiHatClosed"
+                    Keys = Drum['HiHatClosedKeyOutput']
+                    DrumHold = Drum
+                    break
+
                 elif Drum['HiHatBellClosedMidiInput'] == Note:
-                    return {
-                    "Type": "HiHatBellClosed",
-                    "Keys": Drum['HiHatBellClosedKeyOutput'],
-                    "Drum": Drum
-                    }
-                
-                
+                    HitType = "HiHatBellClosed"
+                    Keys = Drum['HiHatBellClosedKeyOutput']
+                    DrumHold = Drum
+                    break
+
+                elif Drum['HiHatStompMidiInput'] == Note:
+                    HitType = "HiHatStompVolume"
+                    Keys = Drum['HiHatStompKeyOutput']
+                    DrumHold = Drum
+                    break
 
             elif HiHatState == "Half":
+
                 if Drum['HiHatHalfMidiInput'] == Note:
-                    return {
-                        "Type": "HiHatHalf",
-                        "Keys": Drum['HiHatHalfKeyOutput'],
-                        "Drum": Drum
-                    }
+                    HitType = "HiHatHalf"
+                    Keys = Drum['HiHatHalfKeyOutput']
+                    DrumHold = Drum
+                    break
+
                 elif Drum['HiHatBellOpenMidiInput'] == Note:
-                    return {
-                        "Type": "HiHatBellOpen",
-                        "Keys": Drum['HiHatBellOpenKeyOutput'],
-                        "Drum": Drum
-                    }
-                
+                    HitType = "HiHatBellOpen"
+                    Keys = Drum['HiHatBellOpenKeyOutput']
+                    DrumHold = Drum
+                    break
 
             else:
+
                 if Drum['HiHatOpenMidiInput'] == Note:
-                    return {
-                        "Type": "HiHatOpen",
-                        "Keys": Drum['HiHatOpenKeyOutput'],
-                        "Drum": Drum
-                    }
-                
+                    HitType = "HiHatOpen"
+                    Keys = Drum['HiHatOpenKeyOutput']
+                    DrumHold = Drum
+                    break
+
                 elif Drum['HiHatBellOpenMidiInput'] == Note:
-                    return {
-                        "Type": "HiHatBellOpen",
-                        "Keys": Drum['HiHatBellOpenKeyOutput'],
-                        "Drum": Drum
-                    }
+                    HitType = "HiHatBellOpen"
+                    Keys = Drum['HiHatBellOpenKeyOutput']
+                    DrumHold = Drum
+                    break
+            
 
         else:
+
+            if Drum['Kick']:
+                DrumType = "Kick"
+
+            elif Drum['Drum']:
+                DrumType = "Drum"
+
+            elif Drum['Cymbal']:
+                DrumType = "Cymbal"
+
             if Drum['CenterMidiInput'] == Note:
-                return {
-                    "Type": "Center",
-                    "Keys": Drum['CenterKeyOutput'],
-                    "Drum": Drum
-                }
-            elif Drum['RimMidInput'] == Note:
-                return {
-                    "Type": "Rim",
-                    "Keys": Drum['RimKeyOutput'],
-                    "Drum": Drum
-                }
-            elif Drum['BowMidInput'] == Note:
-                return {
-                    "Type": "Bow",
-                    "Keys": Drum['BowKeyOutput'],
-                    "Drum": Drum
-                }
+                HitType = "Center"
+                Keys = Drum['CenterKeyOutput']
+                DrumHold = Drum
+                break
+
+            elif Drum['RimMidiInput'] == Note:
+                HitType = "Rim"
+                Keys = Drum['RimKeyOutput']
+                DrumHold = Drum
+                break
+
+            elif Drum['BowMidiInput'] == Note:
+                HitType = "Bow"
+                Keys = Drum['BowKeyOutput']
+                DrumHold = Drum
+                break
+
+    return {
+        "Type": HitType,
+        "Keys": Keys,
+        "Drum": DrumHold,
+        "DrumType": DrumType
+    }
 
 def ResolveDrumSound(Row, Note):
 
@@ -3683,15 +3826,15 @@ def ResolveDrumSound(Row, Note):
     Type = None
     Volume = 100
     GNThresh = 0
-    SlamThresh = 0
+    SlamThresh = 127
     SoundPath = None
-    KickDrumVelocityMin = 0
+    KickDrumVelocityMin = 75
     DrumHold = None
 
     for Drum in Row['DrumList']:
         if Drum['Hihat']:
             Type = "Hihat"
-            if LastPedalValue <= Drum['HiHatClosedThreshold'] and LastPedalValue >= Drum['HiHatOpenThreshold']:
+            if LastPedalValue < Drum['HiHatClosedThreshold'] and LastPedalValue > Drum['HiHatOpenThreshold']:
                 HiHatState = "Half"
 
             elif LastPedalValue >= Drum['HiHatClosedThreshold']:
@@ -3705,58 +3848,93 @@ def ResolveDrumSound(Row, Note):
                     Volume = Drum['HiHatClosedVolume']
                     SoundPath = Drum['HiHatClosedPath']
                     DrumHold = Drum
+                    break
+                
+                elif Drum['HiHatHalfMidiInput'] == Note:
+                    Volume = Drum['HiHatClosedVolume']
+                    SoundPath = Drum['HiHatClosedPath']
+                    DrumHold = Drum
+                    break
                     
                 elif Drum['HiHatBellClosedMidiInput'] == Note:
                     Volume = Drum['HiHatBellClosedVolume']
-                    SoundPath = Drum['HiHatBellClosePath']
+                    SoundPath = Drum['HiHatBellClosedPath']
                     DrumHold = Drum
+                    break
+
+                elif Drum['HiHatBellOpenMidiInput'] == Note:
+                    Volume = Drum['HiHatBellClosedVolume']
+                    SoundPath = Drum['HiHatBellClosedPath']
+                    DrumHold = Drum
+                    break
+
+
+                elif Drum['HiHatStompMidiInput'] == Note:
+                    Volume = Drum['HiHatStompVolume']
+                    SoundPath = Drum['HiHatStompPath']
+                    DrumHold = Drum
+                    break
                 
             elif HiHatState == "Half":
                 if Drum['HiHatHalfMidiInput'] == Note:
                     Volume = Drum['HiHatHalfVolume']
                     SoundPath = Drum['HiHatHalfPath']
                     DrumHold = Drum
+                    break
                     
                 elif Drum['HiHatBellOpenMidiInput'] == Note:
                     Volume = Drum['HiHatBellOpenVolume']
                     SoundPath = Drum['HiHatBellOpenPath']
                     DrumHold = Drum
+                    break
             
             else:
                 if Drum['HiHatOpenMidiInput'] == Note:
                     Volume = Drum['HiHatOpenVolume']
                     SoundPath = Drum['HiHatOpenPath']
                     DrumHold = Drum
+                    break
                     
                 elif Drum['HiHatBellOpenMidiInput'] == Note:
                     Volume = Drum['HiHatBellOpenVolume']
                     SoundPath = Drum['HiHatBellOpenPath']
                     DrumHold = Drum
+                    break
                 
         else:
+            if Drum['Kick']:
+                Type = "Kick"
+            if Drum['Drum']:
+                Type = "Drum"
+            if Drum['Cymbal']:
+                Type = "Cymbal"
+
             if Drum['CenterMidiInput'] == Note:
                 Volume = Drum['CenterVolume']
                 GNThresh = Drum['CenterGhostNoteThreshold']
                 SlamThresh = Drum['CenterSlamNoteThreshold']
                 SoundPath = Drum['CenterSoundFilePath']
                 DrumHold = Drum
-            elif Drum['RimMidInput'] == Note:
-               Volume = Drum['RimVolume']
-               GNThresh = Drum['RimGhostNoteThreshold']
-               SlamThresh = Drum['RimSlamNoteThreshold']
-               SoundPath = Drum['RimSoundFilePath']
-               DrumHold = Drum
-            elif Drum['BowMidInput'] == Note:
+                break
+            elif Drum['RimMidiInput'] == Note:
+                Volume = Drum['RimVolume']
+                GNThresh = Drum['RimGhostNoteThreshold']
+                SlamThresh = Drum['RimSlamNoteThreshold']
+                SoundPath = Drum['RimSoundFilePath']
+                DrumHold = Drum
+                break
+            elif Drum['BowMidiInput'] == Note:
                 Volume = Drum['BowVolume']
                 GNThresh = Drum['BowGhostNoteThreshold']
                 SlamThresh = Drum['BowSlamNoteThreshold']
                 SoundPath = Drum['BowSoundFilePath']
                 DrumHold = Drum
+                break
             if Drum['Kick']:
                 Type = "Kick"
                 KickDrumVelocityMin = Drum['KickDrumMinimumVelocity']
+                break
 
-        
     return{
         "GhostVolume": GhostVolume,
         "SlamVolume": SlamVolume,
@@ -3772,18 +3950,80 @@ def ResolveDrumSound(Row, Note):
         "Drum": DrumHold
     }
 
-def CheckAvailableChannels(Row):
-    UsedChannels = []
-    for Drum in Row['DrumList']:
-        UsedChannels.extend(Drum['Channels'])
+def GetPlaybackChannel(DrumType):
 
-    for Channel in AvailableChannels:
-        if Channel not in UsedChannels:
-            return Channel
+    global CymbalChannels
+    global DrumChannels
+    global OverflowChannels
 
+    # ==============================
+    # Cymbal / HiHat Pool
+    # ==============================
+    if DrumType in ["Hihat", "Cymbal"]:
 
+        StartChannel = CymbalChannels
 
-    return None
+        while True:
+
+            Channel = pygame.mixer.Channel(CymbalChannels)
+            if not Channel.get_busy():
+
+                UseChannel = CymbalChannels
+
+                CymbalChannels += 1
+
+                if CymbalChannels > CymbalChannelEnd:
+                    CymbalChannels = CymbalChannelStart
+
+                return UseChannel
+
+            CymbalChannels += 1
+
+            if CymbalChannels > CymbalChannelEnd:
+                CymbalChannels = CymbalChannelStart
+
+            if CymbalChannels == StartChannel:
+                break
+
+    # ==============================
+    # Drum Pool
+    # ==============================
+    else:
+
+        StartChannel = DrumChannels
+        while True:
+            Channel = pygame.mixer.Channel(DrumChannels)
+
+            if not Channel.get_busy():
+
+                UseChannel = DrumChannels
+
+                DrumChannels += 1
+
+                if DrumChannels > DrumChannelEnd:
+                    DrumChannels = DrumChannelStart
+
+                return UseChannel
+
+            DrumChannels += 1
+
+            if DrumChannels > DrumChannelEnd:
+                DrumChannels = DrumChannelStart
+
+            if DrumChannels == StartChannel:
+                break
+
+    # ==============================
+    # Global Overflow / Steal
+    # ==============================
+    UseChannel = OverflowChannels
+
+    OverflowChannels += 1
+
+    if OverflowChannels > OverflowChannelEnd:
+        OverflowChannels = OverflowChannelStart
+
+    return UseChannel
 
 def CreateVirtualPort(Row):
     Name = f"NullMidiVirtualPort{len(MidiRows)+1:02d}"
@@ -4145,8 +4385,8 @@ def AddMidiRow(Row=None, Loading=False):
             Drum['BowVolume'] = 75
 
             Drum['CenterMidiInput'] = None
-            Drum['RimMidInput'] = None
-            Drum['BowMidInput'] = None
+            Drum['RimMidiInput'] = None
+            Drum['BowMidiInput'] = None
 
             Drum['CenterKeyOutput'] = []
             Drum['RimKeyOutput'] = []
@@ -4179,6 +4419,8 @@ def AddMidiRow(Row=None, Loading=False):
             Drum['HiHatStompVolume'] = 100
             Drum['HiHatStompKeyOutput'] = []
             Drum['HiHatStompMidiInput'] = None
+            Drum['HiHatFadeIn'] = 60
+            Drum['HiHatOpenTime'] = 0.075
         
             Drum['HiHatBellOpenPath'] = None
             Drum['HiHatBellOpenVolume'] = 75
@@ -5372,11 +5614,47 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowStompBrowseButton = tk.Button(HihatRowStompSounds, command=lambda: SearchForSoundFile(Drum, HihatRowStompSoundLocationVar, "HiHatStompPath"), text="Browse", width=8)
                 HihatRowStompBrowseButton.grid(row=1, column=2)
 
+                HihatRowStompSoundLocationVar = tk.StringVar(value=Drum.get("HiHatStompPath", ""))
+
                 def UpdateStompVolume(*args):
                     Drum["HiHatStompVolume"] = StompVolumeVar.get()
                     SaveConfig()
 
                 SetupSlider(HihatRowStompVolumeSlider, StompVolumeVar, 0, 100, UpdateStompVolume)
+
+                HihatOpenFadeInVar = tk.IntVar(value=Drum.get("HiHatFadeIn", 60))
+
+                HihatRowOpenFadeInSliderLabel = tk.Label(HihatRowStompSounds, text="Open Fade In", width=12, height=2)
+                HihatRowOpenFadeInSliderLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
+
+                HihatRowOpenFadeInSlider = tk.Scale(HihatRowStompSounds, from_=0, to=500, orient="horizontal", variable=HihatOpenFadeInVar, showvalue=False, length=22)
+                HihatRowOpenFadeInSlider.grid(row=2, column=1, sticky="ew")
+
+                HihatRowFadeInShowLabel = tk.Label(HihatRowStompSounds, textvariable=HihatOpenFadeInVar)
+                HihatRowFadeInShowLabel.grid(row=2, column=2, sticky="w")
+
+                def UpdateFadeIn(*args):
+                    Drum["HiHatFadeIn"] = HihatOpenFadeInVar.get()
+                    SaveConfig()
+
+                SetupSlider(HihatRowOpenFadeInSlider, HihatOpenFadeInVar, 0, 500, UpdateFadeIn)
+
+                HihatOpenTimeVar = tk.IntVar(value=Drum.get("HiHatOpenTime", 75))
+
+                HihatRowOpenTimeSliderLabel = tk.Label(HihatRowStompSounds, text="Time To\n Open HiHats", width=12, height=2)
+                HihatRowOpenTimeSliderLabel.grid(row=3, column=0, sticky="e", pady=(0,8))
+
+                HihatRowOpenTimeSlider = tk.Scale(HihatRowStompSounds, from_=0, to=500, orient="horizontal", variable=HihatOpenTimeVar, showvalue=False, length=22)
+                HihatRowOpenTimeSlider.grid(row=3, column=1, sticky="ew")
+
+                HihatRowTimeShowLabel = tk.Label(HihatRowStompSounds, textvariable=HihatOpenTimeVar)
+                HihatRowTimeShowLabel.grid(row=3, column=2, sticky="w")
+
+                def UpdateHiHatOpenTime(*args):
+                    Drum["HiHatOpenTime"] = HihatOpenTimeVar.get()
+                    SaveConfig()
+
+                SetupSlider(HihatRowOpenTimeSlider, HihatOpenTimeVar, 0, 500, UpdateHiHatOpenTime)
 
                 Divider = tk.Frame(HihatContainer, width=2, bg="#555")
                 Divider.grid(row=1, column=1, sticky="ns", padx=5)
