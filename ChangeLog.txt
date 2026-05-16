@@ -1,4 +1,12 @@
 Changelog!
+--------------------------------
+4.6 NullZip & NullMidi upgrade
+
+NullMidi is going through an entire overhaul. ....wont even mention everything here. Now it does keypresses, and sounds, and is expandable, and butts.
+
+Nullzip was a stupid 5 minute thing i wanted to make becuase I hated opening terminal and typing 7z x (nameofthing  i want to unzip). so after setup you can now just double click a fucking archive if you set it to default.
+much easier. 
+
 -------------------------------------------------------------
 4.5 QOL fix - NULLMIDI DISABLED
 Updated how the program starts up for quicker start times, and listed those start times for you to see.

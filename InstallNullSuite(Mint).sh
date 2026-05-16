@@ -578,6 +578,63 @@ else
     echo "Skipping NullProton setup."
 fi
 
+# ==============================
+# NullZip Setup
+# ==============================
+
+echo ""
+echo "Do you intend to use NullZip?"
+echo "It allows archive extraction directly from file manager 😉"
+echo ""
+
+read -r -p "Proceed? (y/n): " confirm
+
+if [[ "$confirm" =~ ^[Yy]$ ]]; then
+
+    echo ""
+    echo "Setting up NullZip..."
+
+    # ------------------------------
+    # Ensure 7z
+    # ------------------------------
+
+    if ! command -v 7z >/dev/null 2>&1; then
+
+        echo ""
+        echo "Installing p7zip-full..."
+
+        sudo apt install -y p7zip-full
+    fi
+
+    NULLZIP_DESKTOP="$HOME/.local/share/applications/NullZip.desktop"
+
+    NULLZIP_PATH="$(realpath "$RUNTIME_DIR/NullZip.sh")"
+
+    ICON_PATH3="$(realpath "$RUNTIME_DIR/NullSuite.png" 2>/dev/null)"
+
+    cat > "$NULLZIP_DESKTOP" <<EOF
+[Desktop Entry]
+Name=NullZip
+Exec=$NULLZIP_PATH %f
+Type=Application
+Icon=$ICON_PATH3
+MimeType=application/zip;application/x-rar;application/x-7z-compressed;application/x-tar;application/gzip;application/x-bzip2;
+Terminal=true
+NoDisplay=true
+EOF
+
+    chmod +x "$NULLZIP_DESKTOP"
+
+    echo ""
+    echo "To enable double-click extraction:"
+    echo "Right-click an archive -> Open With -> NullZip"
+    echo "then set it as default."
+    echo ""
+
+else
+    echo "Skipping NullZip setup."
+fi
+
 update-desktop-database \
     "$HOME/.local/share/applications" \
     2>/dev/null
