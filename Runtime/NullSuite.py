@@ -17,6 +17,7 @@ from queue import Queue
 import select
 import mido
 import uinput
+import traceback
 
 os.environ["PULSE_PROP_application.name"] = "NullMidiSounds"
 
@@ -3835,7 +3836,7 @@ def SearchForSoundFile(Drum, var, Field):
         if not path:
             return
         
-        Field = path
+        Drum[Field] = path
         var.set(path)
 
         SaveConfig()
@@ -4246,7 +4247,7 @@ def AddMidiRow(Row=None, Loading=False):
             MainDrumFrame.destroy()
             SaveConfig()
 
-        def SwitchDrumType(Which):
+        def SwitchDrumType(Which, Loading=False):
             MainDrumRowToggles.grid_forget()
             DrumRowDrumRow.grid_forget()
             DrumRowCymbalRow.grid_forget()
@@ -4265,7 +4266,7 @@ def AddMidiRow(Row=None, Loading=False):
             DrumRowAlwaysTrueKick.set(True)
             DrumRowAlwaysTrueHiHat.set(True)
 
-            def SetupPadRow():
+            def SetupPadRow(Loading=False):
                 SoundWidgets.clear()
                 DrumRowTopRow = tk.Frame(DrumRowDrumRow)
                 DrumRowTopRow.grid(row=0, column=0, sticky="ew", padx=2)
@@ -4281,7 +4282,16 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumCollapseButton = tk.Button(DrumRowTopRow, text="▼", command=lambda:CollapseDrum(Drum, PadsContainer), width = 2)
                 DrumCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
 
-                def CollapseDrum(Drum, PadsContainer):
+                def CollapseDrum(Drum, PadsContainer, Loading=False):
+                    if Loading:
+                        if Drum['Collapsed']:
+                            PadsContainer.grid_forget()
+                            DrumCollapseButton.config(text="▶")
+                        else:
+                            PadsContainer.grid(row=1, column=0, sticky="ew", padx=2)
+                            DrumCollapseButton.config(text="▼")
+                        return
+
                     if Drum['Collapsed']:
                         PadsContainer.grid(row=1, column=0, sticky="ew", padx=2)
                         DrumCollapseButton.config(text="▼")
@@ -4379,7 +4389,7 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowCenterSoundPathLabel.grid(row=1, column=0, sticky="e", pady=(0,8))
                 DrumRowCenterSoundLocationIF = tk.Entry(DrumCenterSounds, textvariable=DrumRowCenterSoundLocationVar, state="readonly", width=44)
                 DrumRowCenterSoundLocationIF.grid(row=1, column=1, sticky="ew")
-                DrumRowCenterBrowseButton = tk.Button(DrumCenterSounds, command=lambda: SearchForSoundFile(Drum ,DrumRowCenterSoundLocationVar, Drum['CenterSoundFilePath'] ), text="Browse", width=8)
+                DrumRowCenterBrowseButton = tk.Button(DrumCenterSounds, command=lambda: SearchForSoundFile(Drum ,DrumRowCenterSoundLocationVar, "CenterSoundFilePath" ), text="Browse", width=8)
                 DrumRowCenterBrowseButton.grid(row=1, column=2)
 
                 def UpdateCenterVolume(*args):
@@ -4472,7 +4482,7 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowRimSoundPathLabel.grid(row=1, column=0, sticky="e", pady=(0,8))
                 DrumRowRimSoundLocationIF = tk.Entry(DrumRimSounds, textvariable=DrumRowRimSoundLocationVar, state="readonly", width=44)
                 DrumRowRimSoundLocationIF.grid(row=1, column=1, sticky="ew")
-                DrumRowRimBrowseButton = tk.Button(DrumRimSounds, command=lambda: SearchForSoundFile(Drum ,DrumRowRimSoundLocationVar, Drum['RimSoundFilePath'] ), text="Browse", width=8)
+                DrumRowRimBrowseButton = tk.Button(DrumRimSounds, command=lambda: SearchForSoundFile(Drum ,DrumRowRimSoundLocationVar, "RimSoundFilePath" ), text="Browse", width=8)
                 DrumRowRimBrowseButton.grid(row=1, column=2)
                 
 
@@ -4517,10 +4527,10 @@ def AddMidiRow(Row=None, Loading=False):
 
                 SetupSlider(DrumRowRimSlamSlider,RimSlam,0,127,UpdateRimSlam)
 
-                CollapseDrum(Drum, PadsContainer)
+                CollapseDrum(Drum, PadsContainer, Loading)
                 UpdateMuted()
 
-            def SetupCymbalRow():
+            def SetupCymbalRow(Loading=False):
                 SoundWidgets.clear()
                 CymbalRowTopRow = tk.Frame(DrumRowCymbalRow)
                 CymbalRowTopRow.grid(row=0, column=0, sticky="ew", padx=2)
@@ -4536,7 +4546,16 @@ def AddMidiRow(Row=None, Loading=False):
                 CymbalCollapseButton = tk.Button(CymbalRowTopRow, text="▼", command=lambda:CollapseCymbal(Drum, CymbalsContainer), width = 2)
                 CymbalCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
 
-                def CollapseCymbal(Drum, CymbalsContainer):
+                def CollapseCymbal(Drum, CymbalsContainer, Loading=False):
+                    if Loading:
+                        if Drum['Collapsed']:
+                            CymbalsContainer.grid_forget()
+                            CymbalCollapseButton.config(text="▶")
+                        else:
+                            CymbalsContainer.grid(row=1, column=0, sticky="ew", padx=2)
+                            CymbalCollapseButton.config(text="▼")
+                        return
+
                     if Drum['Collapsed']:
                         CymbalsContainer.grid(row=1, column=0, sticky="ew", padx=2)
                         CymbalCollapseButton.config(text="▼")
@@ -4633,7 +4652,7 @@ def AddMidiRow(Row=None, Loading=False):
                 CymbalRowBellSoundLocationIF = tk.Entry(CymbalRowBellSounds, textvariable=CymbalRowBellSoundLocationVar, state="readonly", width=35)
                 CymbalRowBellSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                CymbalRowBellBrowseButton = tk.Button(CymbalRowBellSounds, command=lambda: SearchForSoundFile(Drum, CymbalRowBellSoundLocationVar, Drum['CenterSoundFilePath']), text="Browse", width=8)
+                CymbalRowBellBrowseButton = tk.Button(CymbalRowBellSounds, command=lambda: SearchForSoundFile(Drum, CymbalRowBellSoundLocationVar, "CenterSoundFilePath"), text="Browse", width=8)
                 CymbalRowBellBrowseButton.grid(row=1, column=2)
 
                 def UpdateBellVolume(*args):
@@ -4727,7 +4746,7 @@ def AddMidiRow(Row=None, Loading=False):
                 CymbalRowEdgeSoundLocationIF = tk.Entry(CymbalRowEdgeSounds, textvariable=CymbalRowEdgeSoundLocationVar, state="readonly", width=22)
                 CymbalRowEdgeSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                CymbalRowEdgeBrowseButton = tk.Button(CymbalRowEdgeSounds, command=lambda: SearchForSoundFile(Drum, CymbalRowEdgeSoundLocationVar, Drum['RimSoundFilePath']), text="Browse", width=8)
+                CymbalRowEdgeBrowseButton = tk.Button(CymbalRowEdgeSounds, command=lambda: SearchForSoundFile(Drum, CymbalRowEdgeSoundLocationVar, "RimSoundFilePath"), text="Browse", width=8)
                 CymbalRowEdgeBrowseButton.grid(row=1, column=2)
 
                 def UpdateEdgeVolume(*args):
@@ -4819,7 +4838,7 @@ def AddMidiRow(Row=None, Loading=False):
                 CymbalRowBowSoundLocationIF = tk.Entry(CymbalRowBowSounds, textvariable=CymbalRowBowSoundLocationVar, state="readonly", width=22)
                 CymbalRowBowSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                CymbalRowBowBrowseButton = tk.Button(CymbalRowBowSounds, command=lambda: SearchForSoundFile(Drum, CymbalRowBowSoundLocationVar, Drum['BowSoundFilePath']), text="Browse", width=8)
+                CymbalRowBowBrowseButton = tk.Button(CymbalRowBowSounds, command=lambda: SearchForSoundFile(Drum, CymbalRowBowSoundLocationVar, "BowSoundFilePath"), text="Browse", width=8)
                 CymbalRowBowBrowseButton.grid(row=1, column=2)
 
                 def UpdateBowVolume(*args):
@@ -4877,10 +4896,10 @@ def AddMidiRow(Row=None, Loading=False):
 
                 SetupSlider(CymbalRowBowSlamSlider, BowSlam, 0, 127, UpdateBowSlam)
 
-                CollapseCymbal(Drum, CymbalsContainer)
+                CollapseCymbal(Drum, CymbalsContainer, Loading)
                 UpdateMuted()
 
-            def SetupKickRow():
+            def SetupKickRow(Loading=False):
                 SoundWidgets.clear()
                 KickRowTopRow = tk.Frame(DrumRowKickRow)
                 KickRowTopRow.grid(row=0, column=0, sticky="ew", padx=2)
@@ -4889,14 +4908,21 @@ def AddMidiRow(Row=None, Loading=False):
                 KickRowTopRow.columnconfigure(1, weight=0 )
                 KickRowTopRow.columnconfigure(2, weight=0 )
                 KickRowTopRow.columnconfigure(3, weight=0 )
-                KickRowTopRow.columnconfigure(4, weight=2 )
-                KickRowTopRow.columnconfigure(5, weight=1 )
                 KickRowTopRow.rowconfigure(0, weight=0 )
 
                 KickCollapseButton = tk.Button(KickRowTopRow, text="▼", command=lambda:CollapseKick(Drum, KickContainer), width = 2)
                 KickCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
 
-                def CollapseKick(Drum, KickContainer):
+                def CollapseKick(Drum, KickContainer, Loading=False):
+                    if Loading:
+                        if Drum['Collapsed']:
+                            KickContainer.grid_forget()
+                            KickCollapseButton.config(text="▶")
+                        else:
+                            KickContainer.grid(row=1, column=0, sticky="ew", padx=2)
+                            KickCollapseButton.config(text="▼")
+                        return
+
                     if Drum['Collapsed']:
                         KickContainer.grid(row=1, column=0, sticky="ew", padx=2)
                         KickCollapseButton.config(text="▼")
@@ -4914,30 +4940,18 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowDrumToMainToggle.grid(row=0, column=1, sticky="ew", padx=2)
                 Divider = tk.Frame(KickRowTopRow,width=2,bg="#555")
                 Divider.grid(row=0,column=2,sticky="ns",padx=5)
-                DrumRowWhichDrum = tk.Label(KickRowTopRow, text="Bass Name:")
-                DrumRowWhichDrum.grid(row=0,column=3,sticky="w",padx=5)
-                DrumName = tk.StringVar(value=Drum.get("DrumName", "Bass Drum"))
-
-                def UpdateDrumName(Row):
-                    Drum['DrumName'] = DrumName.get()
-                    SaveConfig()
-
-                DrumRowDrumName = tk.Entry(KickRowTopRow, textvariable=DrumName, width=30)
-                DrumRowDrumName.grid(row=0, column=4, sticky="ew", padx=2)
-                DrumName.trace_add("write", lambda *args: UpdateDrumName(Drum))
 
                 RemoveDrumObjectFromList= tk.Button(KickRowTopRow, text="Remove Pad?", command=lambda:RemoveDrum(Drum))
-                RemoveDrumObjectFromList.grid(row=0, column=5, sticky="ew", padx=2)
+                RemoveDrumObjectFromList.grid(row=0, column=3, sticky="ew", padx=2)
 
-                KickContainer = tk.Frame(KickRowTopRow, bd=2, relief="solid")
+                KickContainer = tk.Frame(DrumRowKickRow, bd=2, relief="solid")
                 KickContainer.grid(row=1, column=0, sticky="ew", padx=2)
-                KickContainer.columnconfigure(0,weight=4)
-                KickContainer.columnconfigure(1,weight=2)
-                KickContainer.columnconfigure(2,weight=4)
+                KickContainer.columnconfigure(0,weight=1)
+
 
 
                 #---kicks
-                DrumRowKickPad = tk.Frame(DrumRowKickRow)
+                DrumRowKickPad = tk.Frame(KickContainer)
                 DrumRowKickPad.grid(row=1, column=0, sticky="ew", padx=2, pady=2)
 
                 DrumRowKickPad.rowconfigure(0, weight=1)
@@ -4990,7 +5004,7 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowKickSoundLocationIF = tk.Entry(DrumRowKickSounds,textvariable=DrumRowKickSoundLocationVar,state="readonly",width=44)
                 DrumRowKickSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                DrumRowKickBrowseButton = tk.Button(DrumRowKickSounds,command=lambda: SearchForSoundFile(Drum,DrumRowKickSoundLocationVar),text="Browse",width=8)
+                DrumRowKickBrowseButton = tk.Button(DrumRowKickSounds,command=lambda: SearchForSoundFile(Drum,DrumRowKickSoundLocationVar, "CenterSoundFilePath"),text="Browse",width=8)
                 DrumRowKickBrowseButton.grid(row=1, column=2)
 
 
@@ -5018,10 +5032,10 @@ def AddMidiRow(Row=None, Loading=False):
 
                 SetupSlider(DrumRowKickMinimumVelocitySlider, KickDrumMinimumVelocityVar, 0, 127, UpdateKickMinimumVelocity)
 
-                CollapseKick(Drum, KickContainer)
+                CollapseKick(Drum, KickContainer, Loading)
                 UpdateMuted()
 
-            def SetupHihatRow():
+            def SetupHihatRow(Loading=False):
                 SoundWidgets.clear()
 
                 HihatRowTopRow = tk.Frame(DrumRowHihatRow)
@@ -5031,8 +5045,6 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowTopRow.columnconfigure(1, weight=0)
                 HihatRowTopRow.columnconfigure(2, weight=0)
                 HihatRowTopRow.columnconfigure(3, weight=0)
-                HihatRowTopRow.columnconfigure(4, weight=2)
-                HihatRowTopRow.columnconfigure(5, weight=1)
                 HihatRowTopRow.rowconfigure(0, weight=0)
 
                 HihatContainer = tk.Frame(DrumRowHihatRow, bd=2, relief="solid")
@@ -5047,16 +5059,29 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatContainer.rowconfigure(0, weight=1)
                 HihatContainer.rowconfigure(1, weight=1)
 
-                def CollapseHiHat(Drum, HihatContainer):
+                def CollapseHiHat(Drum, HihatContainer, Loading=False):
+                    
+                    if Loading:
+                        if Drum['Collapsed']:
+                            HihatContainer.grid_forget()
+                            HihatCollapseButton.config(text="▶")
+                        else:
+                            HihatContainer.grid(row=1, column=0, sticky="ew", padx=2)
+                            HihatCollapseButton.config(text="▼")
+                        return
+                    
+                    
                     if Drum['Collapsed']:
                         HihatContainer.grid(row=1, column=0, sticky="ew", padx=2)
                         HihatCollapseButton.config(text="▼")
-                        Drum['Collapsed'] = False
+                        if not Loading:
+                            Drum['Collapsed'] = False
                         
                     else:
                         HihatContainer.grid_forget()
                         HihatCollapseButton.config(text="▶")
-                        Drum['Collapsed'] = True
+                        if not Loading:
+                            Drum['Collapsed'] = True
                     SaveConfig()
 
                 HihatCollapseButton = tk.Button(HihatRowTopRow, text="▼", command=lambda:CollapseHiHat(Drum, HihatContainer), width=2)
@@ -5068,22 +5093,8 @@ def AddMidiRow(Row=None, Loading=False):
                 Divider = tk.Frame(HihatRowTopRow, width=2, bg="#555")
                 Divider.grid(row=0, column=2, sticky="ns", padx=5)
 
-                HihatRowWhichLabel = tk.Label(HihatRowTopRow, text="HiHat Name:")
-                HihatRowWhichLabel.grid(row=0, column=3, sticky="w", padx=5)
-
-                HiHatName = tk.StringVar(value=Drum.get("DrumName", ""))
-
-                def UpdateDrumName(Row):
-                    Drum['DrumName'] = HiHatName.get()
-                    SaveConfig()
-
-                HihatRowName = tk.Entry(HihatRowTopRow, textvariable=HiHatName, width=30)
-                HihatRowName.grid(row=0, column=4, sticky="ew", padx=2)
-
-                HiHatName.trace_add("write", lambda *args: UpdateDrumName(Drum))
-
                 RemoveHiHatObjectFromList = tk.Button(HihatRowTopRow, text="Remove HiHat?", command=lambda:RemoveDrum(Drum))
-                RemoveHiHatObjectFromList.grid(row=0, column=5, sticky="ew", padx=2)
+                RemoveHiHatObjectFromList.grid(row=0, column=3, sticky="ew", padx=2)
 
 
 
@@ -5139,7 +5150,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowClosedSoundLocationIF = tk.Entry(HihatRowClosedSounds, textvariable=HihatRowClosedSoundLocationVar, state="readonly", width=22)
                 HihatRowClosedSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                HihatRowClosedBrowseButton = tk.Button(HihatRowClosedSounds, command=lambda: SearchForSoundFile(Drum, HihatRowClosedSoundLocationVar, Drum['HiHatClosedPath']), text="Browse", width=8)
+                HihatRowClosedBrowseButton = tk.Button(HihatRowClosedSounds, command=lambda: SearchForSoundFile(Drum, HihatRowClosedSoundLocationVar, "HiHatClosedPath"), text="Browse", width=8)
                 HihatRowClosedBrowseButton.grid(row=1, column=2)
 
                 def UpdateClosedVolume(*args):
@@ -5174,7 +5185,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowHalfRow.rowconfigure(2, weight=0)
                 HihatRowHalfRow.columnconfigure(0, weight=1)
 
-                HihatRowHalfLabel = tk.Label(HihatRowHalfRow, text="Half Open HiHat", width=8, font=("TkDefaultFont", 12, "bold"))
+                HihatRowHalfLabel = tk.Label(HihatRowHalfRow, text="Half HiHat", width=8, font=("TkDefaultFont", 12, "bold"))
                 HihatRowHalfLabel.grid(row=0, column=0, sticky="ew")
 
                 HihatRowHalfInputsFrame = tk.Frame(HihatRowHalfRow)
@@ -5217,7 +5228,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowHalfSoundLocationIF = tk.Entry(HihatRowHalfSounds, textvariable=HihatRowHalfSoundLocationVar, state="readonly", width=22)
                 HihatRowHalfSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                HihatRowHalfBrowseButton = tk.Button(HihatRowHalfSounds, command=lambda: SearchForSoundFile(Drum, HihatRowHalfSoundLocationVar, Drum['HiHatHalfPath']), text="Browse", width=8)
+                HihatRowHalfBrowseButton = tk.Button(HihatRowHalfSounds, command=lambda: SearchForSoundFile(Drum, HihatRowHalfSoundLocationVar, "HiHatHalfPath"), text="Browse", width=8)
                 HihatRowHalfBrowseButton.grid(row=1, column=2)
 
                 def UpdateHalfVolume(*args):
@@ -5283,7 +5294,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowOpenSoundLocationIF = tk.Entry(HihatRowOpenSounds, textvariable=HihatRowOpenSoundLocationVar, state="readonly", width=22)
                 HihatRowOpenSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                HihatRowOpenBrowseButton = tk.Button(HihatRowOpenSounds, command=lambda: SearchForSoundFile(Drum, HihatRowOpenSoundLocationVar, Drum['HiHatOpenPath']), text="Browse", width=8)
+                HihatRowOpenBrowseButton = tk.Button(HihatRowOpenSounds, command=lambda: SearchForSoundFile(Drum, HihatRowOpenSoundLocationVar, "HiHatOpenPath"), text="Browse", width=8)
                 HihatRowOpenBrowseButton.grid(row=1, column=2)
 
                 def UpdateOpenVolume(*args):
@@ -5358,7 +5369,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowStompSoundLocationIF = tk.Entry(HihatRowStompSounds, textvariable=HihatRowStompSoundLocationVar, state="readonly", width=22)
                 HihatRowStompSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                HihatRowStompBrowseButton = tk.Button(HihatRowStompSounds, command=lambda: SearchForSoundFile(Drum, HihatRowStompSoundLocationVar, Drum['HiHatStompPath']), text="Browse", width=8)
+                HihatRowStompBrowseButton = tk.Button(HihatRowStompSounds, command=lambda: SearchForSoundFile(Drum, HihatRowStompSoundLocationVar, "HiHatStompPath"), text="Browse", width=8)
                 HihatRowStompBrowseButton.grid(row=1, column=2)
 
                 def UpdateStompVolume(*args):
@@ -5423,7 +5434,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowBellOpenSoundLocationIF = tk.Entry(HihatRowBellOpenSounds, textvariable=HihatRowBellOpenSoundLocationVar, state="readonly", width=22)
                 HihatRowBellOpenSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                HihatRowBellOpenBrowseButton = tk.Button(HihatRowBellOpenSounds, command=lambda: SearchForSoundFile(Drum, HihatRowBellOpenSoundLocationVar, Drum['HiHatBellOpenPath']), text="Browse", width=8)
+                HihatRowBellOpenBrowseButton = tk.Button(HihatRowBellOpenSounds, command=lambda: SearchForSoundFile(Drum, HihatRowBellOpenSoundLocationVar, "HiHatBellOpenPath"), text="Browse", width=8)
                 HihatRowBellOpenBrowseButton.grid(row=1, column=2)
 
                 def UpdateBellOpenVolume(*args):
@@ -5488,7 +5499,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowBellClosedSoundLocationIF = tk.Entry(HihatRowBellClosedSounds, textvariable=HihatRowBellClosedSoundLocationVar, state="readonly", width=22)
                 HihatRowBellClosedSoundLocationIF.grid(row=1, column=1, sticky="ew")
 
-                HihatRowBellClosedBrowseButton = tk.Button(HihatRowBellClosedSounds, command=lambda: SearchForSoundFile(Drum, HihatRowBellClosedSoundLocationVar, Drum['HiHatBellClosedPath']), text="Browse", width=8)
+                HihatRowBellClosedBrowseButton = tk.Button(HihatRowBellClosedSounds, command=lambda: SearchForSoundFile(Drum, HihatRowBellClosedSoundLocationVar,"HiHatBellClosedPath"), text="Browse", width=8)
                 HihatRowBellClosedBrowseButton.grid(row=1, column=2)
 
                 def UpdateBellClosedVolume(*args):
@@ -5497,27 +5508,28 @@ def AddMidiRow(Row=None, Loading=False):
 
                 SetupSlider(HihatRowBellClosedVolumeSlider, BellClosedVolumeVar, 0, 100, UpdateBellClosedVolume)
 
-                CollapseHiHat(Drum, HihatContainer)
+                CollapseHiHat(Drum, HihatContainer, Loading)
                 UpdateMuted()
 
             if Which == "Pad":
                 DrumRowDrumRow.grid(row=0, column=0, sticky="ew", padx=2)
                 Drum['Drum'] = True
-                SetupPadRow()
+                SetupPadRow(Loading)
             elif Which == "Cymbal":
                 DrumRowCymbalRow.grid(row=0, column=0, sticky="ew", padx=2)
                 Drum['Cymbal'] = True
-                SetupCymbalRow()
+                SetupCymbalRow(Loading)
             elif Which == "Kick":
                 DrumRowKickRow.grid(row=0, column=0, sticky="ew", padx=2)
                 Drum['Kick'] = True
-                SetupKickRow()
+                SetupKickRow(Loading)
             elif Which == "Hihat":
                 DrumRowHihatRow.grid(row=0, column=0, sticky="ew", padx=2)
                 Drum['Hihat'] = True
-                SetupHihatRow()
+                SetupHihatRow(Loading)
             elif Which == "Main":
                 MainDrumRowToggles.grid(row=0, column=0, sticky="ew", padx=2)
+
 
             SaveConfig()
 
@@ -5534,13 +5546,13 @@ def AddMidiRow(Row=None, Loading=False):
 
         if Loading:
             if Drum['Drum']:
-                SwitchDrumType("Pad")
+                SwitchDrumType("Pad", Loading)
             elif Drum['Cymbal']:
-                SwitchDrumType("Cymbal")
+                SwitchDrumType("Cymbal", Loading)
             elif Drum['Kick']:
-                SwitchDrumType("Kick")
+                SwitchDrumType("Kick", Loading)
             elif Drum['Hihat']:
-                SwitchDrumType("Hihat")
+                SwitchDrumType("Hihat", Loading)
 
         SaveConfig()
     
