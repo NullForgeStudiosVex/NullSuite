@@ -27,7 +27,6 @@ import pygame
 # Startup :)
 # ==========================================================================================
 SystemLoading = True
-StartUpDelay = 100 #if you're looking at this thinking "wtf why a delay?" because tkinter runs on 1 thread...trying to make it load everything, and generate UI, and fill the UI all in 1ms is....bad. so. delay. you wont notice it.
 Root = tk.Tk(className="NullSuite")
 Root.title("NullSuite")
 Root.geometry("1600x900")
@@ -39,8 +38,8 @@ style.map("TNotebook.Tab",foreground=[("disabled", "#666666"),("selected", "#000
 
 LoadPopup = tk.Toplevel(Root)
 LoadPopup.title("Loading NullSuite Data")
-Width = 800
-Height = 450
+Width = 400
+Height = 100
 Root.update_idletasks()
 RootX = Root.winfo_x()
 RootY = Root.winfo_y()
@@ -55,7 +54,8 @@ LoadPopup.grab_set()
 LoadPopup.attributes("-topmost", True)
 LoadFrame = tk.Frame(LoadPopup)
 LoadFrame.pack(fill="both", expand=True)
-tk.Label(LoadFrame,text="This might take a bit if you have a lot of things going.\n If you're really lucky, you won't even be able to read this message.\n\n haha. look at you with the fast computer. NERD",font=("Arial", 12)).pack(expand=True)
+Butts = tk.StringVar(value = "Loading")
+tk.Label(LoadFrame,textvariable=Butts,font=("Arial", 12)).pack(expand=True)
 LoadPopup.update()
 
 def BlockClose():
@@ -76,6 +76,7 @@ Root.iconphoto(True, IconImage)
 LoadTimes = {}
 LoadCompleted = 0
 ProgramCount = 0
+ThreadsFinished = 0
 StartUpTimeString = tk.StringVar(value="")
 # ------------------------------
 # NullProton
@@ -111,13 +112,13 @@ ActiveCapture = {
 }
 SoundQueue = Queue()
 pygame.mixer.init(buffer=256)
-pygame.mixer.set_num_channels(384)
+pygame.mixer.set_num_channels(96)
 CymbalChannelStart = 0
-CymbalChannelEnd = 127
-DrumChannelStart = 128
-DrumChannelEnd = 255
-OverflowChannelStart = 256
-OverflowChannelEnd = 383
+CymbalChannelEnd = 31
+DrumChannelStart = 32
+DrumChannelEnd = 63
+OverflowChannelStart = 64
+OverflowChannelEnd = 95
 LastPedalValue = 100
 OverflowChannels = OverflowChannelStart
 DrumChannels = DrumChannelStart
@@ -215,6 +216,7 @@ def UpdateAvailable():
         return False
 
 def StartTray():
+    global ThreadsFinished
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("AppIndicator3", "0.1")
@@ -278,10 +280,14 @@ def StartTray():
     quitbtn.connect("activate", Quit)
     menu.append(quitbtn)
 
+    ThreadsFinished +=1
+    print("Tray Thread Done")
+
     menu.show_all()
     indicator.set_menu(menu)
 
     Gtk.main()
+    
 
 def GetSavableMidiRows():
 
@@ -329,7 +335,7 @@ def GetSavableMidiRows():
     return SaveRows
 
 def LoadConfig():
-    global StartUpDelay, ProgramCount # to control delay
+    global ProgramCount # to control delay
     global Profiles, ActiveProfile, ScanForMouse #NullWire
     global Devices, Sinks #NullWire
     global ProtonGames #NullProton
@@ -359,9 +365,11 @@ def LoadConfig():
         # ==============================
         # NullWire
         # ==============================
-        print("Loading NullWire")
+        
 
         def LoadNullWire():
+            Butts.set(f"Loading NullWire")
+            LoadPopup.update_idletasks()
             global Sinks, Devices, LoadCompleted
             Sinks.clear()
             Sinks.update(wire.get("Sinks", {}))
@@ -391,16 +399,19 @@ def LoadConfig():
 
             LoadCompleted += 1
 
-        Root.after(StartUpDelay, LoadNullWire)
+
+        Root.after(10, LoadNullWire)
 
 
         
         # ==============================
         # NullCursor
         # ==============================
-        print("Loading NullCursor")
+        
 
         def LoadNullCursor():
+            Butts.set(f"Loading NullCursor")
+            LoadPopup.update_idletasks()
             global ActiveProfile, ScanForMouse,LoadCompleted
             Profiles.clear()
             Profiles.update(cursor.get("Profiles", {}))
@@ -418,44 +429,52 @@ def LoadConfig():
             ToggleNullCursor()
             LoadCompleted += 1
 
-        Root.after(StartUpDelay + 10, LoadNullCursor)
+        Root.after(20, LoadNullCursor)
 
 
         # ==============================
         # NullMidi
         # ==============================
-        print("Loading NullMidi")
+        
 
         def LoadNullMidi():
+            Butts.set(f"Loading NullMidi")
+            LoadPopup.update_idletasks()
             global LoadCompleted
             for row in midi.get("MidiRows", []):
                 AddMidiRow(row, True)
             LoadCompleted+=1
 
-        Root.after(StartUpDelay + 20, LoadNullMidi)
+        Root.after(30, LoadNullMidi)
 
-        Root.after(StartUpDelay + 25, BuildGlobalUInputDevice)
+        Root.after(40, BuildGlobalUInputDevice)
 
         # ==============================
         # NullGit
         # ==============================
-        print("Loading NullGit")
+        
 
         def LoadNullGit():
+            Butts.set(f"Loading NullGit")
+            LoadPopup.update_idletasks()
             global Repos, LoadCompleted
             Repos = repos.get("Repos", {})
             BuildRepoList()
             LoadCompleted +=1
+            Butts.set(f"Loading UI: {LoadCompleted}/{ProgramCount}")
+            LoadPopup.update_idletasks()
 
-        Root.after(StartUpDelay + 30, LoadNullGit)
+        Root.after(50, LoadNullGit)
 
         # ==============================
         # NullProton
         # ==============================
-        print("Loading NullProton")
+        
 
 
         def LoadNullProton():
+            Butts.set(f"Loading NullProton")
+            LoadPopup.update_idletasks()
             global LoadCompleted
             ProtonVars["Default"].set(proton.get("Default", "[ not set ]"))
             ProtonVars["A"].set(proton.get("A", "[ not set ]"))
@@ -467,8 +486,10 @@ def LoadConfig():
             for Game in ProtonGames.copy():
                 AddGameRow(Game, True)
             LoadCompleted+=1
+            Butts.set(f"Loading UI: {LoadCompleted}/{ProgramCount}")
+            LoadPopup.update_idletasks()
 
-        Root.after(StartUpDelay + 40, LoadNullProton)
+        Root.after(60, LoadNullProton)
         return True
 
     except Exception as e:
@@ -544,18 +565,26 @@ def GetCurrentUpdateBranch():
         return None
 
 def RunUpdateCheck():
-    global UpdatePromptShown
+    global UpdatePromptShown, ThreadsFinished
 
     if UpdatePromptShown:
+        ThreadsFinished +=1
+        print("RunUpdate prompt show. so done. ")
         return
     
     if not IsGitInstall():
+        ThreadsFinished +=1
+        print("No git installed. so done.")
         return
     
     if GetCurrentUpdateBranch() != "main":
+        ThreadsFinished +=1
+        print("not main branch. so done.")
         return
 
     if not UpdateAvailable():
+        ThreadsFinished +=1
+        print("no update availible. So done. ")
         return
 
     def Prompt():
@@ -566,6 +595,8 @@ def RunUpdateCheck():
 
             subprocess.Popen([UpdaterPath])
             os._exit(0)
+            ThreadsFinished +=1
+            print("Doin the thing. runupdatecheck done.")
 
     Root.after(0, Prompt)
 
@@ -578,7 +609,10 @@ def BringToFront():
     Root.after(50, lambda: Root.attributes("-topmost", False))
 
 def WatchShowSignal():
+    global ThreadsFinished
     ShowPath = os.path.join(BaseDir, "NullSuite.show")
+    ThreadsFinished +=1
+    print("Watch Show Signal Done")
 
     while True:
         if os.path.exists(ShowPath):
@@ -586,7 +620,7 @@ def WatchShowSignal():
 
             Root.after(0, BringToFront)
 
-        time.sleep(0.5)
+        time.sleep(1)
 
 def BindMouseWheel(self, widget):
 
@@ -3057,7 +3091,10 @@ def FinishRip():
 
 def SoundPlayer():
 
-    global LoadedSounds
+    global LoadedSounds, ThreadsFinished
+
+    ThreadsFinished +=1
+    print("Sound Player Initialized")
 
     while True:
 
@@ -3065,6 +3102,7 @@ def SoundPlayer():
             Data = SoundQueue.get()
 
             if not Data:
+                
                 continue
 
             Owner = Data.get("Owner")
@@ -3073,6 +3111,8 @@ def SoundPlayer():
             Volume = Data.get("Volume", 1.0)
             Loops = Data.get("Loops", 0)
             FadeIn = Data.get("FadeIn", 0)
+
+
 
             if SoundPath is None:
                 continue
@@ -3096,6 +3136,11 @@ def SoundPlayer():
                 args=(Owner, ChannelID),
                 daemon=True
             ).start()
+
+            if not FirstLoop:
+                FirstLoop = True
+                ThreadsFinished +=1
+                print("Sound Player Done")
 
         except Exception as E:
             print("SoundPlayer Error:", E)
@@ -6162,28 +6207,62 @@ def ChangeBranch(Repo, Branch, StatusVar):
             str(e)
         )
 
+def GetLatestReleaseData(RepoName):
+
+    Urls = [
+        f"https://api.github.com/repos/{RepoName}/releases/latest",
+        f"https://api.github.com/repos/{RepoName}/releases"
+    ]
+
+    for Url in Urls:
+        try:
+
+            Result = subprocess.run(
+                ["gh","api",f"repos/{RepoName}/releases"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            Data = json.loads(Result.stdout)
+            if isinstance(Data, dict):
+                Assets = Data.get("assets", [])
+                if (
+                    Data.get("tag_name")
+                    and isinstance(Assets, list)
+                    and len(Assets) > 0
+                ):
+                    return Data
+            elif isinstance(Data, list):
+
+                for Release in Data:
+                    Assets = Release.get("assets", [])
+                    if (
+                        Release.get("tag_name")
+                        and isinstance(Assets, list)
+                        and len(Assets) > 0
+                    ):
+                        return Release
+        except Exception as e:
+            print(e)
+    return None
+
+
 def GetRepoStatus(Repo):
     Path = Repo["Path"]
     Selected = Repo.get(
         "CurrentBranch",
         ""
     )
+
     if "[Release]" in Selected:
         try:
             RepoName = GetGitHubRepo(Path)
             if not RepoName:
                 return "⚪ No GitHub Repo"
-            Result = subprocess.run(
-                [
-                    "curl",
-                    "-s",
-                    f"https://api.github.com/repos/{RepoName}/releases/latest"
-                ],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            Data = json.loads(Result.stdout)
+            Data = GetLatestReleaseData(RepoName)
+            if not Data:
+                return "⚪ Release Unknown"
             LatestTag = Data.get(
                 "tag_name",
                 ""
@@ -6194,22 +6273,22 @@ def GetRepoStatus(Repo):
             )
             if not InstalledTag:
                 return "⚪ No Release Installed"
-
             if InstalledTag == LatestTag:
                 return "🟢 Up To Date"
-
             return "🔴 Needs Updated"
-
-        except:
+        except Exception as e:
+            print("GetRepoStatus Release Error:", e)
             return "⚪ Release Unknown"
 
     try:
+
         subprocess.run(
             ["git", "fetch"],
             cwd=Path,
             capture_output=True,
             text=True
         )
+
         Result = subprocess.run(
             ["git", "status", "-sb"],
             cwd=Path,
@@ -6217,13 +6296,21 @@ def GetRepoStatus(Repo):
             text=True,
             check=True
         )
+
         Status = Result.stdout.lower()
+
         if "behind" in Status:
             return "🔴 Needs Updated"
+
         if "ahead" in Status:
             return "🟡 Ahead"
+
         return "🟢 Up To Date"
-    except:
+
+    except Exception as e:
+
+        print("GetRepoStatus Branch Error:", e)
+
         return "⚪ Unknown"
 
 def ShowDownloadOverlay():
@@ -6873,15 +6960,30 @@ def PullRelease(Repo, StatusVar):
 
     try:
 
-        Result = subprocess.run(["curl", "-s", f"https://api.github.com/repos/{RepoName}/releases/latest"], capture_output=True, text=True, check=True)
+        Data = GetLatestReleaseData(RepoName)
 
-        Data = json.loads(Result.stdout)
+        if not Data:
+
+            StatusVar.set("🔴 No Release")
+
+            messagebox.showerror(
+                "No Release Found",
+                "Could not find a valid downloadable release."
+            )
+
+            return
 
         Assets = Data.get("assets", [])
 
         if not Assets:
+
             StatusVar.set("🔴 No Assets")
-            messagebox.showerror("No Assets Found", "Latest release contains no downloadable assets.")
+
+            messagebox.showerror(
+                "No Assets Found",
+                "Latest release contains no downloadable assets."
+            )
+
             return
 
         # ==================================================
@@ -6891,26 +6993,49 @@ def PullRelease(Repo, StatusVar):
         Popup = tk.Toplevel(Root)
 
         Popup.title("Select Release Assets")
+
         Popup.geometry("500x450")
+
         Popup.transient(Root)
+
         Popup.grab_set()
 
-        tk.Label(Popup, text="Select Release Assets").pack(pady=5)
+        tk.Label(
+            Popup,
+            text="Select Release Assets"
+        ).pack(pady=5)
 
         Scroll = ScrollableFrame(Popup)
 
-        Scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        Scroll.pack(
+            fill="both",
+            expand=True,
+            padx=10,
+            pady=10
+        )
 
         AssetVars = []
 
         for Asset in Assets:
 
             Name = Asset.get("name", "Unknown")
-            Size = round(Asset.get("size", 0) / 1024 / 1024, 2)
+
+            Size = round(
+                Asset.get("size", 0) / 1024 / 1024,
+                2
+            )
 
             Var = tk.BooleanVar()
 
-            tk.Checkbutton(Scroll.Inner, text=f"{Name} ({Size} MB)", variable=Var).pack(anchor="w", padx=5, pady=2)
+            tk.Checkbutton(
+                Scroll.Inner,
+                text=f"{Name} ({Size} MB)",
+                variable=Var
+            ).pack(
+                anchor="w",
+                padx=5,
+                pady=2
+            )
 
             AssetVars.append({
                 "Var": Var,
@@ -6919,7 +7044,11 @@ def PullRelease(Repo, StatusVar):
 
         OpenOnFinish = tk.BooleanVar(value=False)
 
-        tk.Checkbutton(Popup, text="Open Folder After Download", variable=OpenOnFinish).pack(pady=5)
+        tk.Checkbutton(
+            Popup,
+            text="Open Folder After Download",
+            variable=OpenOnFinish
+        ).pack(pady=5)
 
         SelectedAssets = []
 
@@ -6928,11 +7057,18 @@ def PullRelease(Repo, StatusVar):
             for Item in AssetVars:
 
                 if Item["Var"].get():
-                    SelectedAssets.append(Item["Asset"])
+
+                    SelectedAssets.append(
+                        Item["Asset"]
+                    )
 
             Popup.destroy()
 
-        tk.Button(Popup, text="Download Selected", command=DownloadSelected).pack(pady=5)
+        tk.Button(
+            Popup,
+            text="Download Selected",
+            command=DownloadSelected
+        ).pack(pady=5)
 
         Popup.wait_window()
 
@@ -6941,10 +7077,15 @@ def PullRelease(Repo, StatusVar):
         # ==================================================
 
         if not SelectedAssets:
+
             StatusVar.set("⚪ Cancelled")
+
             return
 
-        Tag = Data.get("tag_name", "UnknownRelease")
+        Tag = Data.get(
+            "tag_name",
+            "UnknownRelease"
+        )
 
         # ==================================================
         # Start Download Thread
@@ -7018,12 +7159,11 @@ def AddRepoObject(Repo):
     try:
         RepoName = GetGitHubRepo(Repo["Path"])
         if RepoName:
-            Result = subprocess.run(["curl", "-s", f"https://api.github.com/repos/{RepoName}/releases/latest"], capture_output=True, text=True, check=True)
-            Data = json.loads(Result.stdout)
-            if (Data.get("tag_name") and isinstance(Data.get("assets"), list)and len(Data.get("assets")) > 0):
-                RepoOptions.append({"Label": "Latest [Release]", "Type": "Release", "Value": "latest"})
+            Data = GetLatestReleaseData(RepoName)
+            if (Data and Data.get("tag_name") and isinstance(Data.get("assets"),list) and len(Data.get("assets")) > 0):
+                RepoOptions.append({"Label":"Latest [Release]","Type":"Release","Value":"latest"})
     except:
-        pass
+        print("Release Detection Error:",e)
     DisplayValues = [x["Label"] for x in RepoOptions]
     SavedBranch = Repo.get("CurrentBranch", f"{GetCurrentBranch(Repo['Path'])} [Branch]")
     CurrentBranch = tk.StringVar(value=SavedBranch)
@@ -7043,7 +7183,7 @@ def AddRepoObject(Repo):
     BranchBox = ttk.Combobox(Frame, values=DisplayValues, textvariable=CurrentBranch, state="readonly")
     BranchBox.grid(row=0, column=1, sticky="ew")
     BranchBox.bind("<<ComboboxSelected>>", lambda e: OnRepoOptionChanged())
-    tk.Button(Frame, text="Pull Repo", width=10, command=lambda: PullRepo(Repo, StatusVar)).grid(row=0, column=2, columnspan=3)
+    tk.Button(Frame, text="Pull Repo", width=10, command=lambda: PullRepo(Repo, StatusVar)).grid(row=0, column=2, columnspan=2)
     ttk.Separator(Frame, orient="horizontal").grid(row=1, column=0, sticky="ew", columnspan=3, pady=6)
     StatusVar.set(GetRepoStatus(Repo))
     StatusLabel = tk.Label(Frame, textvariable=StatusVar, width=15, padx=5)
@@ -7069,7 +7209,9 @@ def AddRepoObject(Repo):
         tk.Button(Frame, text="Delete Repo From NullGit", command=lambda: DeleteRepoInNull(Repo)).grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
     RepoBoxes.append(Frame)
-    
+
+
+
 def BuildRepoList():
     global RepoBoxes
 
@@ -7169,7 +7311,6 @@ def OpenRepo(Repo, LocalOrNet=True):
             "Open Repo Failed",
             str(e)
         )
-
 
 def DeleteRepoInNull(Repo):
     
@@ -7733,26 +7874,53 @@ Notebook.add(NullGit, text = "NullGit")
 # ------------------------------
 # Null Suite UI
 # ------------------------------
-NullSuiteFrame = tk.Frame(NullSuite)
-NullSuiteFrame.pack(side="bottom", fill="x")
+NullSuiteList = ScrollableFrame(NullSuite)
+NullSuiteList.grid(row=0,column=0, sticky="ensw")
+
+NullSuite.rowconfigure(0,weight=1)
+NullSuite.rowconfigure(1,weight=0)
+NullSuite.rowconfigure(2,weight=0)
+NullSuite.columnconfigure(0,weight=1)
+
+NullSuiteListInner = NullSuiteList.Inner
+
+#for i in range(3):
+#    NullSuiteListInner.rowconfigure(i,weight=1)
+
+NullSuiteListInner.rowconfigure(0,weight=0)
+NullSuiteListInner.rowconfigure(1,weight=1)
+NullSuiteListInner.rowconfigure(0,weight=0)
+
+NullSuiteListInner.columnconfigure(0,weight=1)
+NullSuiteListInner.columnconfigure(1,weight=2)
+NullSuiteListInner.columnconfigure(2,weight=2)
+NullSuiteListInner.columnconfigure(3,weight=2)
+NullSuiteListInner.columnconfigure(4,weight=1)
+
+ttk.Separator(NullSuiteListInner, orient="horizontal").grid(row=0,column=0, padx=5, pady=10, columnspan=5, sticky="ew" )
+
+NullSuiteHey = tk.Label(NullSuiteListInner,
+    text="There will be stuff here soon xD i promise. I'm just building the apps atm."
+)
+NullSuiteHey.grid(row=1,column=0, padx=5, pady=10, columnspan=5, sticky="nsew" )
+
+ttk.Separator(NullSuiteListInner, orient="horizontal").grid(row=2,column=0, padx=5, pady=10, columnspan=5, sticky="ew" )
+
 AboutNullWire = tk.Label(
-    NullSuiteFrame,
+    NullSuite,
     text="Hey there demons, it's me ya boi.\nIDK what to even put here tbh.\n I like to make things. I have problems, and I code my way out of them. \n Enjoy the efforts of my labor 👍 \n IF you want to support more programs or just donate...theres our ko-fi. "
 )
-AboutNullWire.pack(fill="x")
+AboutNullWire.grid(row=1, column=0, sticky="ew", padx=5, pady=(20,5))
 
 link = tk.Label(
-    NullSuiteFrame,
+    NullSuite,
     text="Our Ko-fi",
     fg="blue",
     cursor="hand2"
 )
-link.pack()
+link.grid(row=2, column=0, sticky="ew", padx=5, pady=(5,10))
 
 link.bind("<Button-1>", lambda e: webbrowser.open_new("https://ko-fi.com/nullforgestudios"))
-
-ttk.Separator(NullSuiteFrame, orient="horizontal").pack(fill="both", pady=5)
-tk.Label(NullSuiteFrame, textvariable=StartUpTimeString).pack(fill="both", pady=5)
 
 # ------------------------------
 # Null Proton UI
@@ -8121,7 +8289,8 @@ NullGitMainPage.rowconfigure(3, weight=0)
 NullGitMainPage.rowconfigure(4, weight=0)
 NullGitMainPage.rowconfigure(5, weight=0)
 NullGitMainPage.rowconfigure(6, weight=0)
-NullGitMainPage.rowconfigure(7, weight=1)
+NullGitMainPage.rowconfigure(7, weight=0)
+NullGitMainPage.rowconfigure(8, weight=1)
 NullGitMainPage.columnconfigure(0, weight=0)
 NullGitMainPage.columnconfigure(1, weight=2)
 NullGitMainPage.columnconfigure(2, weight=0)
@@ -8148,9 +8317,11 @@ tk.Entry(NullGitMainPage,width=30,textvariable=NullGitClonePath,state="readonly"
 tk.Button(NullGitMainPage, text="Clone Repo", width =16,command=lambda:CloneRepo()).grid(row=5, column=0, sticky="w", padx=5)
 tk.Entry(NullGitMainPage,width=30,textvariable=NullGitCloneLink,readonlybackground="#e7e7e7").grid(row=5, column=1, sticky="ew")
 tk.Label(NullGitMainPage, width=18, text="<-- Paste Repo Link").grid(row=5, column=2, sticky="ew")
-ttk.Separator(NullGitMainPage, orient="horizontal").grid(row=6, column=0, sticky="ew",columnspan=2, pady=2)
+tk.Button(NullGitMainPage, text="Check For Updates",command=lambda:BuildRepoList()).grid(row=6, column=0, columnspan=3, sticky="ew", padx=5)
+ttk.Separator(NullGitMainPage, orient="horizontal").grid(row=7, column=0, columnspan=3,sticky="ew", pady=2)
+
 NullGitReposList = ScrollableFrame(NullGitMainPage)
-NullGitReposList.grid(row=7, column=0, sticky="nsew", padx=5, columnspan=3)
+NullGitReposList.grid(row=8, column=0, sticky="nsew", padx=5, columnspan=3)
 NullGitcontainer = NullGitReposList.Inner
 DownloadOverlay = tk.Frame(NullGit,bg="#000000")
 DownloadOverlayLabel = tk.Label(DownloadOverlay,text="Downloading...",font=("Arial", 12),justify="center")
@@ -8264,13 +8435,21 @@ ForcePush.grid(row=0,column=1,sticky="ew",padx=5,pady=2, columnspan=2)
 
 
 def NullCursorLoop():
-    global LastWarpTime, LastOutputs, LastInputs, LastSources, LoadTimes
+    global LastWarpTime, LastOutputs, LastInputs, LastSources, LoadTimes, ThreadsFinished
 
     Start = time.time()
 
     FirstLoop = True
     
     while True:
+        if not ScanForMouse:
+            if FirstLoop:
+                FirstLoop = False
+                ThreadsFinished +=1
+                print("NullCursorDone")
+                LoadTimes['NullCursor'] = (time.time() - Start)
+
+
         if ScanForMouse:
             x, y = GetCursorPos()
             if x is None:
@@ -8331,12 +8510,14 @@ def NullCursorLoop():
 
         if FirstLoop:
             FirstLoop = False
+            ThreadsFinished +=1
+            print("NullCursorDone")
             LoadTimes['NullCursor'] = (time.time() - Start)
 
         time.sleep(max(ScanTime, WarpCooldown))
 
 def NullWireLoop():
-    global LastOutputs, LastInputs, LastSources, SystemLoading, LoadTimes
+    global LastOutputs, LastInputs, LastSources, SystemLoading, LoadTimes, ThreadsFinished
     LastOutputs = set()
     LastInputs = set()
     LastSources = set()
@@ -8375,13 +8556,14 @@ def NullWireLoop():
         if FirstLoop:
             if tick == 0:
                 FirstLoop = False
-                SystemLoading = False
+                ThreadsFinished +=1
+                print("NullWireDone")
                 LoadTimes["NullWire"] = (time.time() - Start)
         else:
             time.sleep(1)
 
 def NullMidiLoop():
-    global LoadTimes
+    global LoadTimes, ThreadsFinished
 
     Start = time.time()
     FirstLoop = True
@@ -8414,9 +8596,34 @@ def NullMidiLoop():
 
         if FirstLoop:
             FirstLoop = False
+            ThreadsFinished +=1
+            print("NullMidiDone")
             LoadTimes['NullMidi'] = (time.time() - Start)
 
         time.sleep(1)
+
+def NullGitLoop():
+    global ThreadsFinished
+    FirstLoop = False
+
+    while True:
+        if SystemLoading:
+            if not FirstLoop:
+                FirstLoop = True
+                ThreadsFinished +=1
+                print("NullGitDone")
+            time.sleep(1)
+            continue
+
+        time.sleep(1800)
+
+        try:
+            Root.after(1, BuildRepoList)
+        except Exception as e:
+            print("NullGitLoop Error:", e)
+
+        
+
 
 def HideToTray():
     if SystemLoading:
@@ -8426,38 +8633,58 @@ def HideToTray():
 Root.protocol("WM_DELETE_WINDOW", HideToTray)
 
 def Startup():
-    global StartUpDelay, SystemLoading, StartUpTime, SystemLoading, LoadTimes
-    StartUpTime = time.time()
+    global SystemLoading
     SystemLoading = True
+
     LoadConfig()
+    WaitForLoad()
     
-    LoadTimes['UI&Data'] = (time.time() - StartUpTime)
+
+def ThreadChecker(ThreadCount):
+    global Butts
+
+    Butts.set(f"Starting Background Tasks/Loops:  {ThreadsFinished}/{ThreadCount}")
+
+    if ThreadsFinished != ThreadCount:
+        Root.after(10, lambda: ThreadChecker(ThreadCount))
+    else:
+        Butts.set(f"Loading Done \n Inserting your save data into Apps")
+        Root.after(1000, lambda: FinallyReady())
+
+    return
+
+def FinallyReady():
+    global SystemLoading
+    print("Finished Startup")
+    SystemLoading = False
+    try:
+        LoadPopup.grab_release()
+    except:
+        pass
     LoadPopup.destroy()
+    Root.focus_force()
 
-    threading.Thread(target=StartTray, daemon=True).start()
-    threading.Thread(target=WatchShowSignal, daemon=True).start()
-    
-    
-    def StartBackgroundThreads():
-        global StartUpTime, WaitTime, StartUpTimeString
-        def UpdateStartUpTimeString():
-            StartUpTimeString.set(f"Total Start Time:{LoadTimes.get("All"):.2f} seconds. \n Generating UI/Loading Your Data:{LoadTimes.get("UI&Data"):.2f}\n NullWire Scanning Your Audio:{LoadTimes.get("NullWire"):.2f}\n NullCursor Scanning Your Monitors/Mouse:{LoadTimes.get("NullCursor"):.2f}\n NullMidi Scanning Your Midi Devices:{LoadTimes.get("NullMidi"):.2f}")
+def WaitForLoad():
+    global SystemLoading, Butts
 
+    LoadPopup.update_idletasks()
+
+    if LoadCompleted >= ProgramCount:
+        ThreadCount = 8
+        threading.Thread(target=StartTray, daemon=True).start()
+        threading.Thread(target=WatchShowSignal, daemon=True).start()
         threading.Thread(target=NullCursorLoop, daemon=True).start()
         threading.Thread(target=NullMidiLoop, daemon=True).start()
         threading.Thread(target=RunUpdateCheck, daemon=True).start()
         threading.Thread(target=NullWireLoop, daemon=True).start()
-        threading.Thread(target=SoundPlayer,daemon=True).start()
-
-        while SystemLoading:
-            time.sleep(0.01)
-            continue
-
-        LoadTimes['All'] = (time.time() - StartUpTime)
-
-        UpdateStartUpTimeString()
-
-    Root.after(1,StartBackgroundThreads)
+        threading.Thread(target=SoundPlayer, daemon=True).start()
+        threading.Thread(target=NullGitLoop, daemon=True).start()
+        
+        ThreadChecker(ThreadCount)
+        return
+    
+    Root.after(10, WaitForLoad)
+        
  
-Root.after(1, Startup)
+Root.after(5, Startup)
 Root.mainloop()
