@@ -2403,7 +2403,7 @@ def LaunchGame(State, Mode, RowIndex):
             Root.after(0, ShowOverlay)
             LogQueue.put("🐧 Launching (Linux)...")
             try:
-                subprocess.Popen([Path])
+                subprocess.Popen([Path],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL,start_new_session=True)
                 LogQueue.put("✅ Game launched")
                 time.sleep(1)
                 Root.after(0, ProtonOverlay.lower)
@@ -2412,9 +2412,11 @@ def LaunchGame(State, Mode, RowIndex):
 
             if State.get("MinimizeOnLaunch"):
                 Root.after(0, Root.iconify)
+                return
 
             if State.get("CloseNPOnExit"):
                 Root.after(0, Root.destroy)
+                return
 
             return
 
