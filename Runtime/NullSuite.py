@@ -3488,7 +3488,6 @@ def HandleMidiMessage(Device, msg):
 
                             
                             if LastHiHatState in ['Closed', 'Half'] and NewHiHatState == "Open":
-                                print(time.time() - HiHatHitHafClosedTime, "Pedal changed this is the time")
                                 if (time.time() - HiHatHitHafClosedTime) <= Drum['HiHatOpenTime'] /1000:
                                     for ChannelID in Drum['Channels']:
                                         pygame.mixer.Channel(ChannelID).fadeout(50)
@@ -3548,21 +3547,20 @@ def HandleMidiMessage(Device, msg):
                             continue
                         
                         if SoundData['Type'] == None:
+                            print("its none")
                             continue
                         if SoundData['Type'] == "Hihat":
                             
                             if msg.note in [Drum['HiHatClosedMidiInput'], Drum['HiHatHalfMidiInput'], Drum['HiHatBellClosedMidiInput']]:
                                 HiHatHitHafClosedTime = time.time()
-                                print(HiHatHitHafClosedTime, "When I Hit the note")
                             if msg.note == Drum['HiHatStompMidiInput']:
                                 for ChannelID in Drum['Channels']:
                                     pygame.mixer.Channel(ChannelID).fadeout(50)
                                 Drum['Channels'].clear()
-
-
+                        
 
                         Velocity = msg.velocity
-                        NormalizedVolume = 75
+                        NormalizedVolume = 100
                         MinVolume = 0
                         MaxVolume = 100
 
@@ -3572,29 +3570,27 @@ def HandleMidiMessage(Device, msg):
 
                         if Velocity <= SoundData['GNThresh']:
                             if SoundData['UseDynamics']:
-                                MaxVolume = SoundData['GhostVolume']
-                                NormalizedVolume = ((Velocity / 127)*(MaxVolume - MinVolume)) + MinVolume
+                                MaxVolume = SoundData['GhostVolume'] / 100
+                                NormalizedVolume = (Velocity / 127) * MaxVolume
                             else:
-                                NormalizedVolume = (SoundData['GhostVolume'])
+                                NormalizedVolume = (SoundData['GhostVolume'] / 100)
 
                         elif Velocity >= SoundData['SlamThresh']:
                             if SoundData['UseDynamics']:
-                                MinVolume = (SoundData['SlamVolume'])
+                                MinVolume = (SoundData['SlamVolume']/100)
                                 NormalizedVolume = (
-                                    (Velocity / 127)*(MaxVolume - MinVolume)) + MinVolume
+                                    MinVolume + ((Velocity /127)) * (1.0 - MinVolume))
                             else:
-                                NormalizedVolume = (SoundData['SlamVolume'])
+                                NormalizedVolume = (SoundData['SlamVolume'] / 100)
 
                         else:
                             if SoundData['UseDynamics']:
-                                MinVolume = 25
-                                MaxVolume = 75
-                                NormalizedVolume = ((Velocity / 127)*(MaxVolume - MinVolume)) + MinVolume
+                                NormalizedVolume = Velocity / 127
                             else:
-                                NormalizedVolume = 75
+                                NormalizedVolume = 1.0
 
-                        NormalizedVolume /= 100
                         NormalizedVolume *= (SoundData['Volume'] / 100)
+
                         UseThisChannel = GetPlaybackChannel(SoundData['Type'])
 
                         Drum["Channels"].append(
@@ -3825,15 +3821,13 @@ def ResolveDrumSound(Row, Note):
     UseDynamics = Row['DynamicVolume']
     Type = None
     Volume = 100
-    GNThresh = 0
-    SlamThresh = 127
+    GNThresh = -1
+    SlamThresh = 200
     SoundPath = None
     KickDrumVelocityMin = 75
     DrumHold = None
-
     for Drum in Row['DrumList']:
         if Drum['Hihat']:
-            Type = "Hihat"
             if LastPedalValue < Drum['HiHatClosedThreshold'] and LastPedalValue > Drum['HiHatOpenThreshold']:
                 HiHatState = "Half"
 
@@ -3842,18 +3836,22 @@ def ResolveDrumSound(Row, Note):
 
             elif LastPedalValue <= Drum['HiHatOpenThreshold']:
                 HiHatState = "Open"
-            
+             
+            Type = "Hihat"
+
             if HiHatState == "Closed":
                 if Drum['HiHatClosedMidiInput'] == Note:
                     Volume = Drum['HiHatClosedVolume']
                     SoundPath = Drum['HiHatClosedPath']
                     DrumHold = Drum
+                
                     break
                 
                 elif Drum['HiHatHalfMidiInput'] == Note:
                     Volume = Drum['HiHatClosedVolume']
                     SoundPath = Drum['HiHatClosedPath']
                     DrumHold = Drum
+                    
                     break
                     
                 elif Drum['HiHatBellClosedMidiInput'] == Note:
@@ -3915,6 +3913,11 @@ def ResolveDrumSound(Row, Note):
                 SlamThresh = Drum['CenterSlamNoteThreshold']
                 SoundPath = Drum['CenterSoundFilePath']
                 DrumHold = Drum
+                if Drum['Kick']:
+                    KickDrumVelocityMin = Drum['KickDrumMinimumVelocity']
+                    GNThresh = -1
+                    SlamThresh = 200
+
                 break
             elif Drum['RimMidiInput'] == Note:
                 Volume = Drum['RimVolume']
@@ -3929,10 +3932,6 @@ def ResolveDrumSound(Row, Note):
                 SlamThresh = Drum['BowSlamNoteThreshold']
                 SoundPath = Drum['BowSoundFilePath']
                 DrumHold = Drum
-                break
-            if Drum['Kick']:
-                Type = "Kick"
-                KickDrumVelocityMin = Drum['KickDrumMinimumVelocity']
                 break
 
     return{
@@ -4289,7 +4288,7 @@ def AddMidiRow(Row=None, Loading=False):
         Row["Device"] = MidiDeviceVar.get()
         SaveConfig()
 
-    MidiDeviceVar = tk.StringVar(value=Row.get("MidiDevice", ""))
+    MidiDeviceVar = tk.StringVar(value=Row.get("Device", ""))
     BasicTopRowMidiDeviceDropDown = ttk.Combobox(BasicTopRow, textvariable=MidiDeviceVar, state="readonly",values=GetPorts())
     BasicTopRowMidiDeviceDropDown.grid(row=0, column=8, sticky="ew", padx=2)
     BasicTopRowMidiDeviceDropDown.bind("<<ComboboxSelected>>",UpdateMidiDevice)
