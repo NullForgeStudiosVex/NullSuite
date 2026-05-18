@@ -4708,6 +4708,19 @@ def AddMidiRow(Row=None, Loading=False):
             KeyOrActionUpdater()
             return
 
+    # --------------- Keyboard
+
+    Keyboardlist = ScrollableFrame(KeyboardRow)
+    Keyboardlist.grid(row=1, column=0, sticky="ewns", padx=2,columnspan=1)
+    Keyboardlist.columnconfigure(0,weight=1)
+    Keyboardlist.rowconfigure(0,weight=1)
+
+    AddKeyboardObjectToList = tk.Button(KeyboardRow, text="Add Keyboard", command=lambda:AddKeyboardToList(None,False))
+    AddKeyboardObjectToList.grid(row=0, column=0, sticky="ew", padx=2, columnspan=9)
+
+    def AddKeyboardToList(Controller=None, Loading=False):
+        return
+
     # --------------- Drums
 
     DrumList = ScrollableFrame(DrumRow)

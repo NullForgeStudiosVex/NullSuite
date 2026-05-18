@@ -3,6 +3,8 @@ Changelog!
 4.6 NullZip & NullMidi upgrade
 
 NullMidi is going through an entire overhaul. ....wont even mention everything here. Now it does keypresses, and sounds, and is expandable, and butts.
+- COMPLETE MIDI DRUM SUPPORT: i basically coded an entire fucking Drum DAW with full customobility. WHOOPS. there goes a week of my life.
+- Controller upgrade: Yeah you acn hit midi press button. key output. thats cool. but now we have direct to single window only. AND ...it can run commands, and it can open files. play files...whatever the hell you want. Streamdeck can kiss my ass. 
 
 Nullzip was a stupid 5 minute thing i wanted to make becuase I hated opening terminal and typing 7z x (nameofthing  i want to unzip). so after setup you can now just double click a fucking archive if you set it to default.
 much easier. 
