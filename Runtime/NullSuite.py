@@ -7813,12 +7813,15 @@ Notebook.add(NullGit, text = "NullGit")
 # ------------------------------
 # Null Suite UI
 # ------------------------------
-NullSuiteList = ScrollableFrame(NullSuite)
-NullSuiteList.grid(row=1,column=0, sticky="ensw")
-
 NullSuiteToggles = tk.Frame(NullSuite)
-NullSuiteToggles.grid(row=0,column=0, sticky="ew")
-NullSuiteToggles.rowconfigure(0,weight=1)
+NullSuiteToggles.grid(row=0,column=0, pady=(5,2), sticky="ew")
+
+NullSuiteTogglesOptions = tk.Frame(NullSuite)
+NullSuiteTogglesOptions.grid(row=1,column=0, pady=(2,20), sticky="ew")
+
+
+
+NullSuiteToggles.rowconfigure(0,weight=0)
 NullSuiteToggles.columnconfigure(0,weight=0)
 NullSuiteToggles.columnconfigure(1,weight=0)
 NullSuiteToggles.columnconfigure(2,weight=0)
@@ -7828,6 +7831,11 @@ NullSuiteToggles.columnconfigure(5,weight=0)
 NullSuiteToggles.columnconfigure(6,weight=0)
 NullSuiteToggles.columnconfigure(7,weight=0)
 NullSuiteToggles.columnconfigure(8,weight=0)
+
+NullSuiteTogglesOptions.rowconfigure(0,weight=0)
+NullSuiteTogglesOptions.columnconfigure(0,weight=0)
+NullSuiteTogglesOptions.columnconfigure(1,weight=0)
+NullSuiteTogglesOptions.columnconfigure(2,weight=0)
 
 
 def UpdateStartUpToggles(Which):
@@ -7854,36 +7862,38 @@ def UpdateStartUpToggles(Which):
     return
 
 NullWireActivator = tk.Checkbutton(NullSuiteToggles, text="NullWire?", variable=NullWireActive, command=lambda: UpdateStartUpToggles("Wire"))
-NullWireActivator.grid(row=0,column=0, padx=1,pady=1)
+NullWireActivator.grid(row=0,column=0, padx=1,pady=1, sticky="w" )
 
 NullCursorActivator = tk.Checkbutton(NullSuiteToggles, text="NullCursor?", variable=NullCursorActive,command=lambda: UpdateStartUpToggles("Cursor"))
-NullCursorActivator.grid(row=0,column=1, padx=1,pady=1)
+NullCursorActivator.grid(row=0,column=1, padx=1,pady=1, sticky="w")
 
 NullMidiActivator = tk.Checkbutton(NullSuiteToggles, text="NullMidi?", variable=NullMidiActive,command=lambda: UpdateStartUpToggles("Midi"))
-NullMidiActivator.grid(row=0,column=2, padx=1,pady=1)
+NullMidiActivator.grid(row=0,column=2, padx=1,pady=1, sticky="w")
 
 NullProtonActivator = tk.Checkbutton(NullSuiteToggles, text="NullProton?", variable=NullProtonActive,command=lambda: UpdateStartUpToggles("Proton"))
-NullProtonActivator.grid(row=0,column=3, padx=1,pady=1)
+NullProtonActivator.grid(row=0,column=3, padx=1,pady=1, sticky="w")
 
 NullRipActivator = tk.Checkbutton(NullSuiteToggles, text="NullRip?", variable=NullRipActive,command=lambda: UpdateStartUpToggles("Rip"))
-NullRipActivator.grid(row=0,column=4, padx=1,pady=1)
+NullRipActivator.grid(row=0,column=4, padx=1,pady=1, sticky="w")
 
 NullGitActivator = tk.Checkbutton(NullSuiteToggles, text="NullGit?", variable=NullGitActive,command=lambda: UpdateStartUpToggles("Git"))
-NullGitActivator.grid(row=0,column=5, padx=1,pady=1)
+NullGitActivator.grid(row=0,column=5, padx=1,pady=1, sticky="w")
 
-StartMinimizedActivator = tk.Checkbutton(NullSuiteToggles, text="Start Minimized?", variable=StartMinimizedActive,command=lambda: UpdateStartUpToggles("Start"))
-StartMinimizedActivator.grid(row=0,column=8, padx=1,pady=1)
+StartMinimizedActivator = tk.Checkbutton(NullSuiteTogglesOptions, text="Start Minimized?", variable=StartMinimizedActive,command=lambda: UpdateStartUpToggles("Start"))
+StartMinimizedActivator.grid(row=0,column=0, padx=1,pady=1, sticky="w")
 
-StartInTrayActivator = tk.Checkbutton(NullSuiteToggles, text="Start In Tray?", variable=StartInTrayActive,command=lambda: UpdateStartUpToggles("Tray"))
-StartInTrayActivator.grid(row=0,column=9, padx=1,pady=1)
+StartInTrayActivator = tk.Checkbutton(NullSuiteTogglesOptions, text="Start In Tray?", variable=StartInTrayActive,command=lambda: UpdateStartUpToggles("Tray"))
+StartInTrayActivator.grid(row=0,column=1, padx=1,pady=1, sticky="w")
 
-DontLoadAppsActivator = tk.Checkbutton(NullSuiteToggles, text="Dont Load Apps On Startup", variable=DontLoadAppsOnStartUpActive,command=lambda: UpdateStartUpToggles("Apps"))
-DontLoadAppsActivator.grid(row=0,column=10, padx=1,pady=1)
+DontLoadAppsActivator = tk.Checkbutton(NullSuiteTogglesOptions, text="Dont Load Apps On Startup", variable=DontLoadAppsOnStartUpActive,command=lambda: UpdateStartUpToggles("Apps"))
+DontLoadAppsActivator.grid(row=0,column=2, padx=1,pady=1, sticky="w")
 
+NullSuiteList = ScrollableFrame(NullSuite)
+NullSuiteList.grid(row=2,column=0, sticky="ensw")
 
 NullSuite.rowconfigure(0,weight=0)
-NullSuite.rowconfigure(1,weight=1)
-NullSuite.rowconfigure(2,weight=0)
+NullSuite.rowconfigure(1,weight=0)
+NullSuite.rowconfigure(2,weight=1)
 NullSuite.rowconfigure(3,weight=0)
 NullSuite.columnconfigure(0,weight=1)
 
@@ -7915,7 +7925,7 @@ AboutNullWire = tk.Label(
     NullSuite,
     text="Hey there demons, it's me ya boi.\nIDK what to even put here tbh.\n I like to make things. I have problems, and I code my way out of them. \n Enjoy the efforts of my labor 👍 \n IF you want to support more programs or just donate...theres our ko-fi. "
 )
-AboutNullWire.grid(row=1, column=0, sticky="ew", padx=5, pady=(20,5))
+AboutNullWire.grid(row=3, column=0, sticky="ew", padx=5, pady=(20,5))
 
 link = tk.Label(
     NullSuite,
@@ -7923,7 +7933,7 @@ link = tk.Label(
     fg="blue",
     cursor="hand2"
 )
-link.grid(row=2, column=0, sticky="ew", padx=5, pady=(5,10))
+link.grid(row=4, column=0, sticky="ew", padx=5, pady=(5,10))
 
 link.bind("<Button-1>", lambda e: webbrowser.open_new("https://ko-fi.com/nullforgestudios"))
 
