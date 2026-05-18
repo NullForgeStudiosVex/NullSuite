@@ -4273,8 +4273,13 @@ def AddMidiRow(Row=None, Loading=False):
     DrumRow.rowconfigure(2,weight=1, minsize=600)
     DrumRow.pack_forget()
 
-    KeyboardRow = tk.Frame(Frame)
+    KeyboardRow = tk.Frame(Frame, bd=2, relief="solid")
     KeyboardRow.pack(fill="x", padx=5, pady=5)
+    tk.Label(KeyboardRow, text="Keyboard has been redacted, Just go here lol: ").pack(fill="x", padx=5, pady=5)
+    pianist = tk.Label(KeyboardRow,text="https://www.onlinepianist.com/virtual-piano",fg="blue",cursor="hand2")
+    pianist.pack(fill="x", padx=5, pady=5)
+    pianist.bind("<Button-1>", lambda e: webbrowser.open_new("https://www.onlinepianist.com/virtual-piano"))
+    
     KeyboardRow.pack_forget()
 
 
@@ -4707,19 +4712,6 @@ def AddMidiRow(Row=None, Loading=False):
         if Loading:
             KeyOrActionUpdater()
             return
-
-    # --------------- Keyboard
-
-    Keyboardlist = ScrollableFrame(KeyboardRow)
-    Keyboardlist.grid(row=1, column=0, sticky="ewns", padx=2,columnspan=1)
-    Keyboardlist.columnconfigure(0,weight=1)
-    Keyboardlist.rowconfigure(0,weight=1)
-
-    AddKeyboardObjectToList = tk.Button(KeyboardRow, text="Add Keyboard", command=lambda:AddKeyboardToList(None,False))
-    AddKeyboardObjectToList.grid(row=0, column=0, sticky="ew", padx=2, columnspan=9)
-
-    def AddKeyboardToList(Controller=None, Loading=False):
-        return
 
     # --------------- Drums
 
