@@ -18,6 +18,7 @@ import select
 import mido
 import uinput
 import traceback
+import shlex
 
 os.environ["PULSE_PROP_application.name"] = "NullMidiSounds"
 
@@ -133,6 +134,7 @@ HiHatPedalChoked = False
 LastHiHatState = "Open"
 NewHiHatState = "Open"
 HiHatHitHafClosedTime = time.time()
+WindowSelection = []
 # ------------------------------
 # NullWire
 # ------------------------------
@@ -239,16 +241,10 @@ def StartTray():
     menu = Gtk.Menu()
 
 
-    def Toggle(_):
-        def DoToggle():
-            if Root.state() == "withdrawn":
-                Root.deiconify()
-                Root.lift()
-                Root.focus_force()
-            else:
-                Root.withdraw()
-
-        Root.after(0, DoToggle)
+    def Show(_):
+        Root.deiconify()
+        Root.lift()
+        Root.focus_force()
 
     def OpenFileLocation(_):
         subprocess.Popen(["xdg-open", BaseDir])
@@ -266,11 +262,19 @@ def StartTray():
         Root.after(0, Root.destroy)
         Gtk.main_quit()
 
+    def Restart(_):
+        if SystemLoading:
+            return
+        subprocess.run([NWPath, "ClearSinks"])
+        subprocess.Popen([sys.executable] + sys.argv)
+        Root.after(0, Root.destroy)
+        Gtk.main_quit()
+
     # ==============================
     # Menu Items
     # ==============================
-    toggle = Gtk.MenuItem(label="Show / Hide")
-    toggle.connect("activate", Toggle)
+    toggle = Gtk.MenuItem(label="Show")
+    toggle.connect("activate", Show)
     menu.append(toggle)
 
     filelocation = Gtk.MenuItem(label="Open File Location")
@@ -280,6 +284,10 @@ def StartTray():
     spacer = Gtk.MenuItem(label="———")
     spacer.set_sensitive(False)
     menu.append(spacer)
+
+    restartbtn = Gtk.MenuItem(label="Restart")
+    restartbtn.connect("activate", Restart)
+    menu.append(restartbtn)
 
     quitbtn = Gtk.MenuItem(label="Quit")
     quitbtn.connect("activate", Quit)
@@ -406,7 +414,7 @@ def LoadConfig():
         StartInTrayActive.set(nullsuite.get("StartInTray", False))
 
         if StartInTrayActive.get():
-            Root.after(0, Root.destroy)
+            Root.after(0, Root.withdraw)
 
         DontLoadAppsOnStartUpActive.set(nullsuite.get("DontStartApps", False))
 
@@ -625,7 +633,19 @@ class ScrollableFrame(tk.Frame):
 # NullSuite
 # ————————————————————————————————————————————————————————————
 
+def SetupSlider(slider, variable, minimum, maximum, callback):
+    def ScrollUp(event):
+        slider.set(min(maximum, slider.get() + 5))
+        callback()
 
+    def ScrollDown(event):
+        slider.set(max(minimum, slider.get() - 5))
+        callback()
+
+    slider.bind("<ButtonRelease-1>",lambda e: callback())
+    slider.bind("<Button-4>", ScrollUp)
+    slider.bind("<Button-5>", ScrollDown)
+    
 
 # ————————————————————————————————————————————————————————————
 # NullWire
@@ -3134,28 +3154,72 @@ def BuildGlobalUInputDevice():
 
     UInputDevice = uinput.Device(list(Keys))
 
-def PressKeyCombo(Keys):
-    if not UInputDevice:
-        BuildGlobalUInputDevice()
-
-    Mapped = []
-    for Key in Keys:
-        Candidate = f"KEY_{Key.upper()}"
-        if hasattr(uinput, Candidate):
-            Mapped.append(getattr(uinput, Candidate))
-
-    if not Mapped:
+def PressKeyCombo(Keys, Window=False, SentWindowClassName=None):
+    if not Keys:
         return
 
-    for Key in Mapped[:-1]:
-        UInputDevice.emit(Key, 1)
+    try:
 
-    UInputDevice.emit_click(Mapped[-1])
+        if Window and SentWindowClassName:
 
-    for Key in Mapped[:-1]:
-        UInputDevice.emit(Key, 0)
+            Result = subprocess.run(
+                [
+                    "xdotool",
+                    "search",
+                    "--class",
+                    SentWindowClassName
+                ],
+                capture_output=True,
+                text=True
+            )
 
-    UInputDevice.syn()
+            WindowIDs = Result.stdout.strip().splitlines()
+
+            if not WindowIDs:
+                return
+
+            KeyCombo = "+".join([Key.lower() for Key in Keys])
+
+            for WindowID in WindowIDs:
+                subprocess.Popen(
+                    [
+                        "xdotool",
+                        "key",
+                        "--window",
+                        WindowID,
+                        KeyCombo
+                    ],
+                    start_new_session=True
+                )
+
+            return
+
+        if not UInputDevice:
+            BuildGlobalUInputDevice()
+
+        Mapped = []
+
+        for Key in Keys:
+            Candidate = f"KEY_{Key.upper()}"
+
+            if hasattr(uinput, Candidate):
+                Mapped.append(getattr(uinput, Candidate))
+
+        if not Mapped:
+            return
+
+        for Key in Mapped[:-1]:
+            UInputDevice.emit(Key, 1)
+
+        UInputDevice.emit_click(Mapped[-1])
+
+        for Key in Mapped[:-1]:
+            UInputDevice.emit(Key, 0)
+
+        UInputDevice.syn()
+
+    except Exception as e:
+        print(f"PressKeyCombo Error: {e}")
 
 def NormalizeKey(Key):
     Key = Key.upper()
@@ -3345,6 +3409,9 @@ def DetectKey(Button, Target, Field, Timeout=5):
 
     Tick()
 
+
+
+
 # ------------------------------ 
 # Midi Handling
 # ------------------------------
@@ -3425,6 +3492,12 @@ def StopMidiListener(Device):
     del MidiDeviceListeners[Device]
 
     print(f"🛑 Stopped MIDI Listener: {Device}")
+
+def GetMidiController(Row, Note):
+    for Controller in Row['ControllerList']:
+        if Controller['MidiInput'] == Note:
+            return Controller
+    return
 
 def HandleMidiMessage(Device, msg):
     global LastPedalValue, PreviousPedalValue, HiHatPedalChoked, LastHiHatState, NewHiHatState, HiHatHitHafClosedTime
@@ -3511,6 +3584,8 @@ def HandleMidiMessage(Device, msg):
                 elif Row['Keyboard']:
                     continue
 
+                elif Row['Controller']:
+                    continue
                 else:
                     continue
 
@@ -3596,6 +3671,22 @@ def HandleMidiMessage(Device, msg):
                     continue
 
                 elif Row['Keyboard']:
+                    continue
+
+                elif Row['Controller']:
+
+                    Controller = GetMidiController(Row, msg.note)
+
+                    if not Controller:
+                        continue
+                    else:
+                        if not Controller['KeyOrAction']: 
+                            PressKeyCombo(Controller["KeyOutput"], Controller['WindowSpecific'], Controller['WindowClassName'])
+                        else:
+                            if Controller['FileOrCustom']:
+                                MidiFileOpen(Controller['StartFilePath'])
+                            else:
+                                MidiCustomRun(Controller['CustomCommand'])
                     continue
 
                 else:
@@ -4050,6 +4141,20 @@ def ResolveDrumChoke(Row, Note):
 
     return None
 
+def MidiCustomRun(Command):
+    subprocess.Popen(shlex.split(Command),start_new_session=True)
+    return
+
+def MidiFileOpen(Path):
+    try:
+        subprocess.Popen(
+            ["xdg-open", Path],
+            start_new_session=True
+        )
+    except Exception as e:
+        print(f"MidiFileOpen Error: {e}")
+    return
+
 # ------------------------------ 
 # UI Stuff
 # ------------------------------
@@ -4062,6 +4167,18 @@ def SearchForSoundFile(Drum, var, Field):
             return
         
         Drum[Field] = path
+        var.set(path)
+
+        SaveConfig("NullMidi")
+
+def SearchForAnyFile(Controller, var, Field):
+        path = filedialog.askopenfilename(
+            filetypes=[("All files", "*.*")]
+        )
+        if not path:
+            return
+        
+        Controller[Field] = path
         var.set(path)
 
         SaveConfig("NullMidi")
@@ -4134,7 +4251,10 @@ def AddMidiRow(Row=None, Loading=False):
     BasicTopRow.rowconfigure(0, weight=0)
     
     ControllerRow = tk.Frame(Frame)
-    ControllerRow.pack(fill="x", padx=5, pady=5)
+    ControllerRow.pack(fill="both", expand=True, padx=5, pady=5)
+    ControllerRow.rowconfigure(0, weight=0)
+    ControllerRow.rowconfigure(1, weight=1, minsize=600)
+    ControllerRow.columnconfigure(0, weight=1)
     ControllerRow.pack_forget()
 
     DrumRow = tk.Frame(Frame)
@@ -4150,7 +4270,7 @@ def AddMidiRow(Row=None, Loading=False):
     DrumRow.columnconfigure(8, weight=0)
     DrumRow.rowconfigure(0,weight=1)
     DrumRow.rowconfigure(1,weight=0)
-    DrumRow.rowconfigure(2,weight=1, minsize=700)
+    DrumRow.rowconfigure(2,weight=1, minsize=600)
     DrumRow.pack_forget()
 
     KeyboardRow = tk.Frame(Frame)
@@ -4170,10 +4290,23 @@ def AddMidiRow(Row=None, Loading=False):
 
     SoundWidgets = {}
 
-    def CollapseRow(Row):
-        DrumRow.pack_forget()
-        ControllerRow.pack_forget()
-        KeyboardRow.pack_forget()
+    def CollapseRow(Row, Loading=False):
+        if Loading:
+            DrumRow.pack_forget()
+            ControllerRow.pack_forget()
+            KeyboardRow.pack_forget()
+            if Row["RowCollapsed"]:
+                BasicTopRowCollapseButton.config(text="▶")
+            else:
+                BasicTopRowCollapseButton.config(text="▼")
+                if Row["Drums"]:
+                    DrumRow.pack(fill="both", expand=True, padx=5, pady=5)
+                elif Row["Controller"]:
+                    ControllerRow.pack(fill="x", padx=5, pady=5)
+                elif Row["Keyboard"]:
+                    KeyboardRow.pack(fill="x", padx=5, pady=5)
+            return
+
         if Row["RowCollapsed"]:
             BasicTopRowCollapseButton.config(text="▼")
             if Row["Drums"]:
@@ -4184,8 +4317,11 @@ def AddMidiRow(Row=None, Loading=False):
                 KeyboardRow.pack(fill="x", padx=5, pady=5)
             Row["RowCollapsed"] = False
         else:
-            Row["RowCollapsed"] = True
+            DrumRow.pack_forget()
+            ControllerRow.pack_forget()
+            KeyboardRow.pack_forget()
             BasicTopRowCollapseButton.config(text="▶")
+            Row["RowCollapsed"] = True
             
     def HideBasictopRow():
         TogglesRowAlwaysFalseControllerVar.set(False)
@@ -4230,7 +4366,7 @@ def AddMidiRow(Row=None, Loading=False):
         Row["SendKeys"] = SendKeysVar.get()
         SaveConfig("NullMidi")
 
-    BasicTopRowCollapseButton = tk.Button(BasicTopRow, text="▼", command=lambda:CollapseRow(Row), width = 2)
+    BasicTopRowCollapseButton = tk.Button(BasicTopRow, text="▼", command=lambda:CollapseRow(Row, False), width = 2)
     BasicTopRowCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
 
     #all3same
@@ -4315,22 +4451,264 @@ def AddMidiRow(Row=None, Loading=False):
             BasicTopRowKeyboardToggle.grid()
         SaveConfig("NullMidi")
     
+    def BuildWindowSelectionList():
+            global WindowSelection
+            WindowSelection.clear()
+
+            try:
+                Result = subprocess.run(
+                    ["wmctrl", "-lx"],
+                    capture_output=True,
+                    text=True
+                )
+
+                SeenClasses = set()
+
+                for line in Result.stdout.splitlines():
+                    parts = line.split(None, 4)
+
+                    if len(parts) < 5:
+                        continue
+
+                    WindowClass = parts[2]
+                    WindowTitle = parts[4]
+
+                    if (
+                        WindowClass in SeenClasses
+                        or WindowClass.strip() == ""
+                        or WindowClass.lower() in [
+                            "desktop.desktop",
+                            "gnome-shell.gnome-shell",
+                            "plasmashell.plasmashell"
+                        ]
+                    ):
+                        continue
+
+                    SeenClasses.add(WindowClass)
+
+                    DisplayName = WindowTitle.strip()
+
+                    if DisplayName == "":
+                        DisplayName = WindowClass
+
+                    WindowSelection.append({
+                        "UIName": DisplayName,
+                        "ClassName": WindowClass
+                    })
+            except Exception as e:
+                print(f"BuildWindowSelectionList Error: {e}")
+
+    def SearchForWindow(Dict, var, ClassName,DisplayName):
+        BuildWindowSelectionList()
+
+        Popup = tk.Toplevel(Root)
+        Popup.title("Select Window")
+        Popup.geometry("400x500")
+        Popup.grab_set()
+
+        ScrollFrame = ScrollableFrame(Popup)
+        ScrollFrame.pack(fill="both", expand=True)
+
+        for Window in WindowSelection:
+            tk.Button(
+                ScrollFrame.Inner,
+                text=f"{Window['UIName']}\n({Window['ClassName']})",
+                justify="left",
+                anchor="w",
+                command=lambda w=Window: SelectWindow(w, Dict, var, ClassName,DisplayName, Popup)
+            ).pack(fill="x", padx=2, pady=2)
+
+    def SelectWindow(Window, Dict, var, ClassName,DisplayName, Popup):
+        Dict[ClassName] = Window["ClassName"]
+        var.set(Window["UIName"])
+        Dict[DisplayName] = Window["UIName"]
+        SaveConfig("NullMidi")
+        Popup.destroy()
+
+
+    # --------------- Controller
+
+    Controllerlist = ScrollableFrame(ControllerRow)
+    Controllerlist.grid(row=1, column=0, sticky="ewns", padx=2,columnspan=1)
+    Controllerlist.columnconfigure(0,weight=1)
+    Controllerlist.rowconfigure(0,weight=1)
+
+    AddControllerObjectToList = tk.Button(ControllerRow, text="Add Controller", command=lambda:AddControllerToList(None,False))
+    AddControllerObjectToList.grid(row=0, column=0, sticky="ew", padx=2, columnspan=9)
+
+    def AddControllerToList(Controller=None, Loading=False):
+        ControllerFrame = tk.Frame(Controllerlist.Inner, bd=2, relief="solid")
+        ControllerFrame.pack(fill="both", expand=True, padx=5, pady=5)
+        ControllerFrame.columnconfigure(0, weight=0)
+        ControllerFrame.columnconfigure(1, weight=0)
+        ControllerFrame.columnconfigure(2, weight=0)
+        ControllerFrame.columnconfigure(3, weight=0)
+        ControllerFrame.columnconfigure(4, weight=2)
+        ControllerFrame.columnconfigure(5, weight=0)
+        ControllerFrame.columnconfigure(6, weight=0)
+        ControllerFrame.rowconfigure(0, weight=1)
+
+        if Controller is None:
+            Controller = {}
+            Controller['MidiInput'] = None
+            Controller['KeyOutput'] = []
+            Controller['KeyOrAction'] = False
+            Controller['WindowSpecific'] = False
+            Controller['WindowClassName'] = ""
+            Controller['WindowDisplayName'] = ""
+            Controller['StartFilePath'] = ""
+            Controller['CustomCommand'] = ""
+            Controller['FileOrCustom'] = False
+            Row['ControllerList'].append(Controller)
+            SaveConfig("NullMidi")
+
+
+        KeyOrAction = tk.BooleanVar(value=Controller.get("KeyOrAction",False))
+        WindowSpecific = tk.BooleanVar(value=Controller.get("WindowSpecific",False))
+        WindowDisplayName = tk.StringVar(value= Controller.get("WindowDisplayName", ""))
+        StartFilePath = tk.StringVar(value= Controller.get("StartFilePath", ""))
+        CustomCommand = tk.StringVar(value= Controller.get("CustomCommand", ""))
+        FileOrCustom = tk.BooleanVar(value=Controller.get("FileOrCustom",False))
+
+        
+
+        def KeyOrActionUpdater():
+            Controller['KeyOrAction'] = KeyOrAction.get()
+
+            if Controller['KeyOrAction']:
+                ControllerKeyOutputButton.grid_forget()
+                ControllerWindowSpecificSwitcher.grid_forget()
+                ControllerWindowSpecifiWindowShow.grid_forget()
+                ControllerWindowSpecificChooseWindowButton.grid_forget()
+
+                ControllerFileSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
+
+                if Controller['FileOrCustom']:
+                    ControllerCustomEntryShow.grid(row=0, column=4, sticky="ew")
+                    ControllerCustomRunButton.grid(row=0, column=5)
+                    ControllerActionEntryShow.grid_forget()
+                    ControllerChooseFile.grid_forget()
+                else:
+                    ControllerActionEntryShow.grid(row=0, column=4, sticky="ew")
+                    ControllerChooseFile.grid(row=0, column=5)
+                    ControllerCustomEntryShow.grid_forget()
+                    ControllerCustomRunButton.grid_forget()
+            else:
+                ControllerKeyOutputButton.grid(row=0, column=2, sticky="ew")
+                ControllerWindowSpecificSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
+                if Controller['WindowSpecific']:
+                    ControllerWindowSpecifiWindowShow.grid(row=0, column=4, sticky="ew")
+                    ControllerWindowSpecificChooseWindowButton.grid(row=0, column=5)
+                else:
+                    ControllerWindowSpecifiWindowShow.grid_forget()
+                    ControllerWindowSpecificChooseWindowButton.grid_forget()
+
+                ControllerFileSwitcher.grid_forget()
+                ControllerCustomEntryShow.grid_forget()
+                ControllerCustomRunButton.grid_forget()
+                ControllerActionEntryShow.grid_forget()
+                ControllerChooseFile.grid_forget()
+
+                
+                
+
+            SaveConfig("NullMidi")
+
+        def WindowSpecificUpdater():
+            Controller['WindowSpecific'] = WindowSpecific.get()
+
+            if Controller['WindowSpecific']:
+                ControllerWindowSpecifiWindowShow.grid(row=0, column=4, sticky="ew")
+                ControllerWindowSpecificChooseWindowButton.grid(row=0, column=5)
+            else:
+                ControllerWindowSpecifiWindowShow.grid_forget()
+                ControllerWindowSpecificChooseWindowButton.grid_forget()
+            SaveConfig("NullMidi")
+            return
+            
+        def FileOrCustomUpdater():
+            Controller['FileOrCustom'] = FileOrCustom.get()
+
+            if Controller['FileOrCustom']:
+                ControllerCustomEntryShow.grid(row=0, column=4, sticky="ew")
+                ControllerCustomRunButton.grid(row=0, column=5)
+                ControllerActionEntryShow.grid_forget()
+                ControllerChooseFile.grid_forget()
+            else:
+                ControllerActionEntryShow.grid(row=0, column=4, sticky="ew")
+                ControllerChooseFile.grid(row=0, column=5)
+                ControllerCustomEntryShow.grid_forget()
+                ControllerCustomRunButton.grid_forget()
+
+                
+            SaveConfig("NullMidi")
+            return
+            
+        def RemoveController(Controller):
+            Row["ControllerList"].remove(Controller)
+            ControllerFrame.destroy()
+            SaveConfig("NullMidi")
+
+        def UpdateCustomCommand(*args):
+            Controller['CustomCommand'] = CustomCommand.get()
+            SaveConfig("NullMidi")
+
+        
+
+        ControllerKeyActionSwitcher = tk.Checkbutton(ControllerFrame, text="Keys|Action", variable=KeyOrAction, command=lambda:KeyOrActionUpdater())
+        ControllerKeyActionSwitcher.grid(row=0, column=0, sticky="ew", padx=2)
+
+        ControllerMidiInputButton = tk.Button(ControllerFrame,text=("Set Midi"if Controller.get("MidiInput") is None else str(Controller.get("MidiInput"))),command=lambda: DetectNote(ControllerMidiInputButton,Row["Device"],Controller, "MidiInput"), width =22)
+        ControllerMidiInputButton.grid(row=0, column=1)
+
+        #--- Key
+
+        ControllerKeyOutputButton = tk.Button(ControllerFrame,text="+".join(Controller.get("KeyOutput")) or "Set Key",command=lambda: DetectKey(ControllerKeyOutputButton,Controller, "KeyOutput"), width=22)
+        ControllerKeyOutputButton.grid(row=0, column=2, sticky="ew")
+
+        ControllerWindowSpecificSwitcher = tk.Checkbutton(ControllerFrame, text="All|Window", variable=WindowSpecific, command=lambda:WindowSpecificUpdater())
+        ControllerWindowSpecificSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
+
+        ControllerWindowSpecifiWindowShow = tk.Entry(ControllerFrame, textvariable=WindowDisplayName, state="readonly")
+        ControllerWindowSpecifiWindowShow.grid(row=0, column=4, sticky="ew")
+        ControllerWindowSpecifiWindowShow.grid_forget()
+
+        ControllerWindowSpecificChooseWindowButton = tk.Button(ControllerFrame, command=lambda: SearchForWindow(Controller, WindowDisplayName, "WindowClassName", "WindowDisplayName" ), text="Choose Window", width=14)
+        ControllerWindowSpecificChooseWindowButton.grid(row=0, column=5)
+        ControllerWindowSpecificChooseWindowButton.grid_forget()
+
+        # --- Opener 
+        ControllerFileSwitcher = tk.Checkbutton(ControllerFrame, text="File|Custom", variable=FileOrCustom, command=lambda:FileOrCustomUpdater())
+        ControllerFileSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
+        ControllerFileSwitcher.grid_forget()
+
+        ControllerActionEntryShow = tk.Entry(ControllerFrame, textvariable=StartFilePath, state="readonly")
+        ControllerActionEntryShow.grid(row=0, column=4, sticky="ew")
+        ControllerActionEntryShow.grid_forget()
+
+        ControllerChooseFile = tk.Button(ControllerFrame, command=lambda: SearchForAnyFile(Controller,StartFilePath,"StartFilePath"), text="Browse", width=8)
+        ControllerChooseFile.grid(row=0, column=5)
+        ControllerChooseFile.grid_forget()
+
+        ControllerCustomEntryShow = tk.Entry(ControllerFrame, textvariable=CustomCommand,)
+        ControllerCustomEntryShow.grid(row=0, column=4, sticky="ew")
+        ControllerCustomEntryShow.grid_forget()
+        CustomCommand.trace_add("write", UpdateCustomCommand)
+
+        ControllerCustomRunButton= tk.Button(ControllerFrame, command=lambda: MidiCustomRun(Controller['CustomCommand']), text="Run", width=8)
+        ControllerCustomRunButton.grid(row=0, column=5)
+        ControllerCustomRunButton.grid_forget()
+
+        #--- Always
+
+        ControllerRemoveButton = tk.Button(ControllerFrame, command=lambda: RemoveController(Controller), text="Remove Controller", width=18)
+        ControllerRemoveButton.grid(row=0, column=6)
+
+        if Loading:
+            KeyOrActionUpdater()
+            return
 
     # --------------- Drums
-
-    def SetupSlider(slider, variable, minimum, maximum, callback):
-            def ScrollUp(event):
-                slider.set(min(maximum, slider.get() + 5))
-                callback()
-
-            def ScrollDown(event):
-                slider.set(max(minimum, slider.get() - 5))
-                callback()
-
-            slider.bind("<ButtonRelease-1>",lambda e: callback())
-            slider.bind("<Button-4>", ScrollUp)
-            slider.bind("<Button-5>", ScrollDown)
-    
 
     DrumList = ScrollableFrame(DrumRow)
 
@@ -4348,6 +4726,9 @@ def AddMidiRow(Row=None, Loading=False):
         
         if Drum is None:
             Drum = {}
+            Drum['SpecificWindow'] = False
+            Drum['WindowClassName'] = ""
+            Drum['WindowDisplayName'] = ""
             Drum['Channels'] = []
             Drum['Collapsed'] = False
             Drum['DrumName'] = ""
@@ -4418,6 +4799,39 @@ def AddMidiRow(Row=None, Loading=False):
             Drum['HiHatBellClosedMidiInput'] = None
 
             Row['DrumList'].append(Drum)
+
+        DrumWindowDisplayName = tk.StringVar(value= Drum.get("WindowDisplayName", ""))
+        DrumWindowSpecific = tk.BooleanVar(value=Drum.get("WindowSpecific",False))
+
+        def DrumWindowSpecificUpdater(Loading=False):
+            Drum['WindowSpecific'] = DrumWindowSpecific.get()
+
+            if Drum['WindowSpecific']:
+                DrumWindowSpecifiWindowShow.grid(row=1, column=5, sticky="ew")
+                DrumWindowSpecificChooseWindowButton.grid(row=1, column=8)
+            else:
+                DrumWindowSpecifiWindowShow.grid_forget()
+                DrumWindowSpecificChooseWindowButton.grid_forget()
+            SaveConfig("NullMidi")
+            return
+            
+
+        DrumWindowSpecificSwitcher = tk.Checkbutton(DrumRow, text="All|Window", variable=DrumWindowSpecific, command=lambda:DrumWindowSpecificUpdater())
+        DrumWindowSpecificSwitcher.grid(row=1, column=4, sticky="ew", padx=2)
+
+        DrumWindowSpecificChooseWindowButton = tk.Button(DrumRow, command=lambda: SearchForWindow(Drum, DrumWindowDisplayName, "WindowClassName", "WindowDisplayName" ), text="Choose Window", width=14)
+        DrumWindowSpecificChooseWindowButton.grid(row=1, column=8)
+        DrumWindowSpecificChooseWindowButton.grid_forget()
+
+        DrumWindowSpecifiWindowShow = tk.Entry(DrumRow, textvariable=DrumWindowDisplayName, state="readonly", width = 1)
+        DrumWindowSpecifiWindowShow.grid(row=1, column=5, sticky="ew")
+        DrumWindowSpecifiWindowShow.grid_forget()
+
+        Divider = tk.Frame(DrumRow,width=2,bg="#555")
+        Divider.grid(row=1,column=7,sticky="news",padx=5)
+
+        Divider = tk.Frame(DrumRow,width=2,bg="#555")
+        Divider.grid(row=1,column=3,sticky="news",padx=5)
 
         DrumRowAlwaysFalsePad = tk.BooleanVar(value=False)
         DrumRowAlwaysFalseCymbal = tk.BooleanVar(value=False)
@@ -5808,6 +6222,7 @@ def AddMidiRow(Row=None, Loading=False):
         RemoveDrumObjectFromListMainDrum.grid(row=0, column=4, sticky="ew", padx=2)
 
         if Loading:
+            DrumWindowSpecificUpdater(True)
             if Drum['Drum']:
                 SwitchDrumType("Pad", Loading)
             elif Drum['Cymbal']:
@@ -5851,17 +6266,19 @@ def AddMidiRow(Row=None, Loading=False):
     Divider = tk.Frame(DrumRow,width=2,bg="#555")
     Divider.grid(row=0,column=7,sticky="news",padx=5)
 
-    DynamicVolume = tk.Checkbutton(DrumRow,variable=DynamicVolumeCheck, text="Dynamic\n Volume", command=lambda: UpdateDynamics())
+    DynamicVolume = tk.Checkbutton(DrumRow,variable=DynamicVolumeCheck, text="Dynamic Volume", command=lambda: UpdateDynamics(), width=15)
     DynamicVolume.grid(row=0, column=8, sticky="ew", padx=2)
 
     AddDrumObjectToList = tk.Button(DrumRow, text="Add Drum", command=lambda:AddDrumToList())
-    AddDrumObjectToList.grid(row=1, column=0, sticky="ew", padx=2, columnspan=9)
+    AddDrumObjectToList.grid(row=1, column=0, sticky="ew", padx=2, columnspan=2)
+
+    
 
     
 
     SetupSlider(DrumGhostVolumeSlider,DrumGhostNoteVolume,1,25,UpdateGhostVolume)
     SetupSlider(DrumSlamVolumeSlider,DrumSlamNoteVolume,76,100,UpdateSlamVolume)
-    CollapseRow(Row)
+    
 
 
     MidiRows.append(Row)
@@ -5873,11 +6290,14 @@ def AddMidiRow(Row=None, Loading=False):
             HideToggleRowShowOtherRow("Drums")
             for drum in Row['DrumList']:
                 AddDrumToList(drum, True)
-
         elif Row['Keyboard']:
             HideToggleRowShowOtherRow("Keyboard")
         elif Row['Controller']:
             HideToggleRowShowOtherRow("Controller")
+            for controller in Row['ControllerList']:
+                AddControllerToList(controller, True)
+
+        CollapseRow(Row, True)
 
 
 def RemoveMidiRow(Frame, Row):
@@ -6147,45 +6567,30 @@ def ChangeBranch(Repo, Branch, StatusVar):
         )
 
 def GetLatestReleaseData(RepoName):
+    try:
+        Result = subprocess.run(
+            ["gh","api",f"repos/{RepoName}/releases/latest"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
 
-    Urls = [
-        f"https://api.github.com/repos/{RepoName}/releases/latest",
-        f"https://api.github.com/repos/{RepoName}/releases"
-    ]
+        Data = json.loads(Result.stdout)
+        Assets = Data.get("assets", [])
+        if (
+            Data.get("tag_name")
+            and isinstance(Assets, list)
+            and len(Assets) > 0
+        ):
+            return Data
 
-    for Url in Urls:
-        try:
+    except subprocess.CalledProcessError:
+        return None
+    except Exception as e:
 
-            Result = subprocess.run(
-                ["gh","api",f"repos/{RepoName}/releases"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
+        print(e)
 
-            Data = json.loads(Result.stdout)
-            if isinstance(Data, dict):
-                Assets = Data.get("assets", [])
-                if (
-                    Data.get("tag_name")
-                    and isinstance(Assets, list)
-                    and len(Assets) > 0
-                ):
-                    return Data
-            elif isinstance(Data, list):
-
-                for Release in Data:
-                    Assets = Release.get("assets", [])
-                    if (
-                        Release.get("tag_name")
-                        and isinstance(Assets, list)
-                        and len(Assets) > 0
-                    ):
-                        return Release
-        except Exception as e:
-            print(e)
     return None
-
 
 def GetRepoStatus(Repo):
     Path = Repo["Path"]
@@ -7078,6 +7483,64 @@ def GetGitHubRepo(Path):
     except:
         return None
 
+def UpdateRepoStatus(Repo, StatusVar):
+    Result = GetRepoStatus(Repo)
+    Root.after(
+        0,
+        lambda: StatusVar.set(Result)
+    )
+
+def UpdateReleaseOption(
+    Repo,
+    RepoOptions,
+    BranchBox
+):
+
+    try:
+
+        RepoName = GetGitHubRepo(
+            Repo["Path"]
+        )
+
+        if not RepoName:
+            return
+
+        Data = GetLatestReleaseData(
+            RepoName
+        )
+
+        if (
+            Data
+            and Data.get("tag_name")
+            and isinstance(Data.get("assets"), list)
+            and len(Data.get("assets")) > 0
+        ):
+
+            RepoOptions.append({
+                "Label":"Latest [Release]",
+                "Type":"Release",
+                "Value":"latest"
+            })
+
+            DisplayValues = [
+                x["Label"]
+                for x in RepoOptions
+            ]
+
+            Root.after(
+                0,
+                lambda: BranchBox.config(
+                    values=DisplayValues
+                )
+            )
+
+    except Exception as e:
+
+        print(
+            "Release Detection Error:",
+            e
+        )
+
 def AddRepoObject(Repo):
     global RepoBoxes
     Frame = tk.LabelFrame(NullGitcontainer, text=Repo["Name"], bd=2, relief="solid")
@@ -7089,20 +7552,14 @@ def AddRepoObject(Repo):
         Frame.rowconfigure(i, weight=0)
 
     StatusVar = tk.StringVar()
+    StatusVar.set("⚪ Checking...")
     Branches = GetBranches(Repo["Path"])
     RepoOptions = []
 
     for Branch in Branches:
         RepoOptions.append({"Label": f"{Branch} [Branch]", "Type": "Branch", "Value": Branch})
 
-    try:
-        RepoName = GetGitHubRepo(Repo["Path"])
-        if RepoName:
-            Data = GetLatestReleaseData(RepoName)
-            if (Data and Data.get("tag_name") and isinstance(Data.get("assets"),list) and len(Data.get("assets")) > 0):
-                RepoOptions.append({"Label":"Latest [Release]","Type":"Release","Value":"latest"})
-    except:
-        print("Release Detection Error:")
+    
     DisplayValues = [x["Label"] for x in RepoOptions]
     SavedBranch = Repo.get("CurrentBranch", f"{GetCurrentBranch(Repo['Path'])} [Branch]")
     CurrentBranch = tk.StringVar(value=SavedBranch)
@@ -7122,9 +7579,13 @@ def AddRepoObject(Repo):
     BranchBox = ttk.Combobox(Frame, values=DisplayValues, textvariable=CurrentBranch, state="readonly")
     BranchBox.grid(row=0, column=1, sticky="ew")
     BranchBox.bind("<<ComboboxSelected>>", lambda e: OnRepoOptionChanged())
+    try:
+        threading.Thread(target=UpdateReleaseOption,args=(Repo,RepoOptions,BranchBox),daemon=True).start()
+    except:
+        print("Release Detection Error:")
     tk.Button(Frame, text="Pull Repo", width=10, command=lambda: PullRepo(Repo, StatusVar)).grid(row=0, column=2, columnspan=2)
     ttk.Separator(Frame, orient="horizontal").grid(row=1, column=0, sticky="ew", columnspan=3, pady=6)
-    StatusVar.set(GetRepoStatus(Repo))
+    
     StatusLabel = tk.Label(Frame, textvariable=StatusVar, width=15, padx=5)
     StatusLabel.grid(row=0, column=0, sticky="ew")
     InnerFrame = tk.Frame(Frame)
@@ -7147,9 +7608,8 @@ def AddRepoObject(Repo):
     else:
         tk.Button(Frame, text="Delete Repo From NullGit", command=lambda: DeleteRepoInNull(Repo)).grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
+    threading.Thread(target=UpdateRepoStatus,args=(Repo, StatusVar),daemon=True).start()
     RepoBoxes.append(Frame)
-
-
 
 def BuildRepoList():
     global RepoBoxes
@@ -7923,9 +8383,9 @@ ttk.Separator(NullSuiteListInner, orient="horizontal").grid(row=2,column=0, padx
 
 AboutNullWire = tk.Label(
     NullSuite,
-    text="Hey there demons, it's me ya boi.\nIDK what to even put here tbh.\n I like to make things. I have problems, and I code my way out of them. \n Enjoy the efforts of my labor 👍 \n IF you want to support more programs or just donate...theres our ko-fi. "
+    text="Welcome to NullSuite! A collective trashpile of applications from NullForgeStudios, for ease of use with LinuxMint!  Enjoy, This will ALWAYS be free, buuuuuuuut if you wanna donate to help it along... "
 )
-AboutNullWire.grid(row=3, column=0, sticky="ew", padx=5, pady=(20,5))
+AboutNullWire.grid(row=3, column=0, sticky="ew", padx=5, pady=(5,0))
 
 link = tk.Label(
     NullSuite,
@@ -7933,7 +8393,7 @@ link = tk.Label(
     fg="blue",
     cursor="hand2"
 )
-link.grid(row=4, column=0, sticky="ew", padx=5, pady=(5,10))
+link.grid(row=4, column=0, sticky="ew", padx=5, pady=(0,10))
 
 link.bind("<Button-1>", lambda e: webbrowser.open_new("https://ko-fi.com/nullforgestudios"))
 
