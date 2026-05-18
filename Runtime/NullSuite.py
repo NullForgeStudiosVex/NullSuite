@@ -27,6 +27,7 @@ import pygame
 # Startup :)
 # ==========================================================================================
 SystemLoading = True
+ProgramLoading = False
 Root = tk.Tk(className="NullSuite")
 Root.title("NullSuite")
 Root.geometry("1600x900")
@@ -34,8 +35,16 @@ Main = tk.Frame(Root)
 Main.pack(fill="both", expand=True, padx=10, pady=10)
 style = ttk.Style()
 style.map("TNotebook.Tab",foreground=[("disabled", "#666666"),("selected", "#000000"),("!disabled", "#000000")])
-
-
+NullWireActive = tk.BooleanVar(value=False)
+NullRipActive = tk.BooleanVar(value=False)
+NullMidiActive = tk.BooleanVar(value=False)
+NullProtonActive = tk.BooleanVar(value=False)
+NullCursorActive = tk.BooleanVar(value=False)
+NullGitActive = tk.BooleanVar(value=False)
+StartMinimizedActive= tk.BooleanVar(value=False)
+StartInTrayActive= tk.BooleanVar(value=False)
+DontLoadAppsOnStartUpActive= tk.BooleanVar(value=False)
+MixerInitialized = False
 LoadPopup = tk.Toplevel(Root)
 LoadPopup.title("Loading NullSuite Data")
 Width = 400
@@ -76,8 +85,6 @@ Root.iconphoto(True, IconImage)
 LoadTimes = {}
 LoadCompleted = 0
 ProgramCount = 0
-ThreadsFinished = 0
-StartUpTimeString = tk.StringVar(value="")
 # ------------------------------
 # NullProton
 # ------------------------------
@@ -111,8 +118,6 @@ ActiveCapture = {
     "Cancel": False
 }
 SoundQueue = Queue()
-pygame.mixer.init(buffer=256)
-pygame.mixer.set_num_channels(96)
 CymbalChannelStart = 0
 CymbalChannelEnd = 31
 DrumChannelStart = 32
@@ -186,6 +191,7 @@ setproctitle.setproctitle("NullSuite")
 Root.title("NullSuite")
 UpdatePromptShown = False
 
+
 def GetRepoRoot():
     return os.path.dirname(BaseDir)
 
@@ -216,7 +222,6 @@ def UpdateAvailable():
         return False
 
 def StartTray():
-    global ThreadsFinished
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("AppIndicator3", "0.1")
@@ -280,7 +285,7 @@ def StartTray():
     quitbtn.connect("activate", Quit)
     menu.append(quitbtn)
 
-    ThreadsFinished +=1
+    
     print("Tray Thread Done")
 
     menu.show_all()
@@ -335,14 +340,7 @@ def GetSavableMidiRows():
     return SaveRows
 
 def LoadConfig():
-    global ProgramCount # to control delay
-    global Profiles, ActiveProfile, ScanForMouse #NullWire
-    global Devices, Sinks #NullWire
-    global ProtonGames #NullProton
-    global MidiRows #NullMidi
-    global Repos #NullGit
-    
-
+    global ProgramCount
     if not os.path.isfile(ConfigPath):
         return False
 
@@ -350,201 +348,153 @@ def LoadConfig():
         with open(ConfigPath, "r") as f:
             data = json.load(f)
 
-        print("Loading States")
-        # ==============================
-        # LoadStatesFirst
-        # ==============================
-        proton = data.get("NullProton", {})
-        wire = data.get("NullWire", {})
-        cursor = data.get("NullCursor", {})
-        midi = data.get("NullMidi", {})
-        repos = data.get("NullGit", {})
+        nullsuite = data.get("NullSuite", {})
 
-        ProgramCount = 5
-        
-        # ==============================
-        # NullWire
-        # ==============================
-        
+        Modules = {
+        "NullWire": {
+            "Config": "NullWireActive",
+            "Toggle": NullWireActive,
+            "Start": StartUpNullWire,
+            "Tab": NullWire,
+        },
 
-        def LoadNullWire():
-            Butts.set(f"Loading NullWire")
-            LoadPopup.update_idletasks()
-            global Sinks, Devices, LoadCompleted
-            Sinks.clear()
-            Sinks.update(wire.get("Sinks", {}))
+        "NullCursor": {
+            "Config": "NullCursorActive",
+            "Toggle": NullCursorActive,
+            "Start": StartUpNullCursor,
+            "Tab": NullCursor,
+        },
 
-            Devices["A"].update(wire.get("DevicesA", {}))
-            Devices["M"].update(wire.get("DevicesM", {}))
+        "NullMidi": {
+            "Config": "NullMidiActive",
+            "Toggle": NullMidiActive,
+            "Start": StartUpNullMidi,
+            "Tab": NullMidi,
+        },
 
-            subprocess.run([NWPath, "ClearSinks"])
+        "NullProton": {
+            "Config": "NullProtonActive",
+            "Toggle": NullProtonActive,
+            "Start": StartUpNullProton,
+            "Tab": NullProton,
+        },
 
-            for name, sink in Sinks.items():
-                subprocess.run([NWPath, "CreateSink", name])
-                for d, enabled in sink["Outputs"].items():
-                    device = Devices["A"].get(d)
-                    if not device or not enabled:
-                        continue
-                    subprocess.run([NWPath,"ConnectSinkToAux",name,device["ID"],str(int(sink["Mono"]))])
-                for d, enabled in sink["Inputs"].items():
-                    device = Devices["M"].get(d)
-                    if not device or not enabled:
-                        continue
-                    subprocess.run([NWPath,"ConnectMicToSink",device["ID"],name])
-                for src in sink["Sources"]:
-                    subprocess.run([NWPath,"ConnectSourceToSink",src,name])
-                
-            NullWireRebuildUI()
-            RefreshRoutingUI()
+        "NullRip": {
+            "Config": "NullRipActive",
+            "Toggle": NullRipActive,
+            "Start": StartUpNullRip,
+            "Tab": NullRip,
+        },
 
-            LoadCompleted += 1
+        "NullGit": {
+            "Config": "NullGitActive",
+            "Toggle": NullGitActive,
+            "Start": StartUpNullGit,
+            "Tab": NullGit,
+        }
+    }
 
+        ProgramCount = len(Modules)
+        LoadStagger = 0
 
-        Root.after(10, LoadNullWire)
+        nullsuite = data.get("NullSuite", {})
+        StartMinimizedActive.set(nullsuite.get("StartMinimized", False))
 
+        if StartMinimizedActive.get():
+            Root.after(0, Root.iconify)
 
-        
-        # ==============================
-        # NullCursor
-        # ==============================
-        
+        StartInTrayActive.set(nullsuite.get("StartInTray", False))
 
-        def LoadNullCursor():
-            Butts.set(f"Loading NullCursor")
-            LoadPopup.update_idletasks()
-            global ActiveProfile, ScanForMouse,LoadCompleted
-            Profiles.clear()
-            Profiles.update(cursor.get("Profiles", {}))
-            ActiveProfile = cursor.get("ActiveProfile")
-            ScanForMouse = cursor.get("ScanForMouse", False)
-            if len(Profiles) == 0:
-                Profiles["Default"] = {
-                    "Layout": CaptureLayout(),
-                    "Warps": {}
-                }
-                ActiveProfile = "Default"
-                SaveConfig()
-            BuildUIFromProfiles()
-            NullCursorEnabledVar.set(ScanForMouse)
-            ToggleNullCursor()
-            LoadCompleted += 1
+        if StartInTrayActive.get():
+            Root.after(0, Root.destroy)
 
-        Root.after(20, LoadNullCursor)
+        DontLoadAppsOnStartUpActive.set(nullsuite.get("DontStartApps", False))
 
+        if DontLoadAppsOnStartUpActive.get() == False:
+            for Name, Module in Modules.items():
+                Module["Toggle"].set(nullsuite.get(Module["Config"], False))
 
-        # ==============================
-        # NullMidi
-        # ==============================
-        
+                if Module["Toggle"].get():
+                    LoadStagger += 250
 
-        def LoadNullMidi():
-            Butts.set(f"Loading NullMidi")
-            LoadPopup.update_idletasks()
-            global LoadCompleted
-            for row in midi.get("MidiRows", []):
-                AddMidiRow(row, True)
-            LoadCompleted+=1
+                Root.after(LoadStagger, Module["Start"])
 
-        Root.after(30, LoadNullMidi)
-
-        Root.after(40, BuildGlobalUInputDevice)
-
-        # ==============================
-        # NullGit
-        # ==============================
-        
-
-        def LoadNullGit():
-            Butts.set(f"Loading NullGit")
-            LoadPopup.update_idletasks()
-            global Repos, LoadCompleted
-            Repos = repos.get("Repos", {})
-            BuildRepoList()
-            LoadCompleted +=1
-            Butts.set(f"Loading UI: {LoadCompleted}/{ProgramCount}")
-            LoadPopup.update_idletasks()
-
-        Root.after(50, LoadNullGit)
-
-        # ==============================
-        # NullProton
-        # ==============================
-        
-
-
-        def LoadNullProton():
-            Butts.set(f"Loading NullProton")
-            LoadPopup.update_idletasks()
-            global LoadCompleted
-            ProtonVars["Default"].set(proton.get("Default", "[ not set ]"))
-            ProtonVars["A"].set(proton.get("A", "[ not set ]"))
-            ProtonVars["B"].set(proton.get("B", "[ not set ]"))
-
-            ProtonGames.clear()
-            ProtonGames.extend(proton.get("Games", []))
-
-            for Game in ProtonGames.copy():
-                AddGameRow(Game, True)
-            LoadCompleted+=1
-            Butts.set(f"Loading UI: {LoadCompleted}/{ProgramCount}")
-            LoadPopup.update_idletasks()
-
-        Root.after(60, LoadNullProton)
         return True
 
     except Exception as e:
         print("LoadConfig failed:", e)
         return False
 
-def SaveConfig():
-    if LoadCompleted != ProgramCount:
-        print("Attempted to save while loading")
+def SaveConfig(Which):
+    if LoadCompleted < ProgramCount:
+        print("Not Done Loading", {LoadCompleted},"/",{ProgramCount})
         return
     
+    if SystemLoading:
+        return
+        
+
     print("Saved")
     
-    
-    data = {
-        # ==============================
-        # NullProton
-        # ==============================
-        "NullProton": {
-            "Default": ProtonVars["Default"].get(),
-            "A": ProtonVars["A"].get(),
-            "B": ProtonVars["B"].get(),
-            "Games": ProtonGames
-        },
+    try:
+        with open(ConfigPath, "r") as f:
+            data = json.load(f)
+    except:
+        data = {}
 
-        # ==============================
-        # NullWire
-        # ==============================
-        "NullWire": {
+    if Which == "NullSuite":
+        data.update({
+            "NullSuite": {
+                "NullWireActive": NullWireActive.get(),
+                "NullCursorActive": NullCursorActive.get(),
+                "NullMidiActive": NullMidiActive.get(),
+                "NullProtonActive": NullProtonActive.get(),
+                "NullRipActive": NullRipActive.get(),
+                "NullGitActive": NullGitActive.get(),
+                "StartMinimized": StartMinimizedActive.get(),
+                "StartInTray": StartInTrayActive.get(),
+                "DontStartApps": DontLoadAppsOnStartUpActive.get()
+            }
+        })
+
+    elif Which == "NullProton":
+        data.update({
+            "NullProton": {
+                "Default": ProtonVars["Default"].get(),
+                "A": ProtonVars["A"].get(),
+                "B": ProtonVars["B"].get(),
+                "Games": ProtonGames
+            }
+        })
+    elif Which == "NullWire":
+        data.update({
+            "NullWire": {
             "Sinks": Sinks,
             "DevicesA": Devices["A"],
             "DevicesM": Devices["M"]
-        },
-
-        # ==============================
-        # NullCursor
-        # ==============================
-        "NullCursor": {
+            }
+        })
+    
+    elif Which == "NullCursor":
+        data.update({
+            "NullCursor": {
             "Profiles": Profiles,
             "ActiveProfile": ActiveProfile,
             "ScanForMouse": ScanForMouse
-        },
-
-        # ==============================
-        # NullMidi
-        # ==============================
-        "NullMidi": {
+            }
+        })
+    elif Which == "NullMidi":
+        data.update({
+            "NullMidi": {
             "MidiRows": GetSavableMidiRows()
-        },
-
-        # ==============================
-        # NullGit
-        # ==============================
-        "NullGit": {"Repos":Repos}
-    }
+            }
+        })
+    elif Which == "NullGit":
+        data.update({
+            "NullGit": {"Repos":Repos}
+        })
+    else:
+        return
 
     try:
         with open(ConfigPath, "w") as f:
@@ -565,26 +515,19 @@ def GetCurrentUpdateBranch():
         return None
 
 def RunUpdateCheck():
-    global UpdatePromptShown, ThreadsFinished
+    global UpdatePromptShown
 
     if UpdatePromptShown:
-        ThreadsFinished +=1
-        print("RunUpdate prompt show. so done. ")
         return
     
     if not IsGitInstall():
-        ThreadsFinished +=1
-        print("No git installed. so done.")
         return
     
     if GetCurrentUpdateBranch() != "main":
-        ThreadsFinished +=1
-        print("not main branch. so done.")
         return
 
     if not UpdateAvailable():
-        ThreadsFinished +=1
-        print("no update availible. So done. ")
+
         return
 
     def Prompt():
@@ -595,8 +538,6 @@ def RunUpdateCheck():
 
             subprocess.Popen([UpdaterPath])
             os._exit(0)
-            ThreadsFinished +=1
-            print("Doin the thing. runupdatecheck done.")
 
     Root.after(0, Prompt)
 
@@ -609,10 +550,8 @@ def BringToFront():
     Root.after(50, lambda: Root.attributes("-topmost", False))
 
 def WatchShowSignal():
-    global ThreadsFinished
     ShowPath = os.path.join(BaseDir, "NullSuite.show")
-    ThreadsFinished +=1
-    print("Watch Show Signal Done")
+
 
     while True:
         if os.path.exists(ShowPath):
@@ -865,7 +804,7 @@ def AddRoutingObject():
     new = {"Mono": False, "Mute":False, "Outputs": {f"A{i}": False for i in range(1, 21)},"Inputs":  {f"M{i}": False for i in range(1, 21)},"Sources": [],"Volume": 100,}
     Sinks[name] = new
     subprocess.run([NWPath,"CreateSink",name])
-    SaveConfig()
+    SaveConfig("NullWire")
     RefreshRoutingUI()
     NullWireRoutingEntry.delete(0, tk.END)
 
@@ -889,7 +828,7 @@ def AddRoutingBlock(name, Sink):
     def Delete():
         del Sinks[name]
         subprocess.run([NWPath,"DeleteSink",name,])
-        SaveConfig() #
+        SaveConfig("NullWire")
         RefreshRoutingUI()
 
     Column0 = tk.Frame(Frame)
@@ -926,7 +865,7 @@ def AddRoutingBlock(name, Sink):
     def ApplyVolume():
         volumenumber = scale.get()
         Sink["Volume"] = volumenumber
-        SaveConfig()
+        SaveConfig("NullWire")
         subprocess.run([NWPath,"SetSinkVolume",name,str(volumenumber)])
 
     def ScheduleApply():
@@ -966,7 +905,7 @@ def AddRoutingBlock(name, Sink):
             else:
                 subprocess.run([NWPath,"RemoveSinkFromAux",name,DeviceID])
                 Sink["Outputs"][d] = False
-            SaveConfig()
+            SaveConfig("NullWire")
         cb = tk.Checkbutton(RowA,text=device,variable=var,width=3,command=Toggle,anchor="w")
         cb.grid(row=0, column=i, sticky="ew", padx=2, pady=0)
 
@@ -1000,7 +939,7 @@ def AddRoutingBlock(name, Sink):
             else:
                 subprocess.run([NWPath,"RemoveMicFromSink",DeviceID,name])
                 Sink["Inputs"][d] = False
-            SaveConfig()
+            SaveConfig("NullWire")
 
         cb = tk.Checkbutton(RowM,text=device,variable=var,width=3,command=Toggle,anchor="w")
         cb.grid(row=0, column=i, sticky="ew", padx=2, pady=0)
@@ -1041,7 +980,7 @@ def AddRoutingBlock(name, Sink):
             DeviceID = DeviceData["ID"]
             subprocess.run([NWPath,"RemoveSinkFromAux",name,DeviceID])
             subprocess.run([NWPath,"ConnectSinkToAux",name,DeviceID,str(int(Sink["Mono"]))])
-        SaveConfig()
+        SaveConfig("NullWire")
 
     tk.Checkbutton(Column0,text="Mono?",variable=MonoVar,command=ToggleMono)\
         .grid(row=0, column=1, padx=5, pady=5, sticky="w")
@@ -1056,7 +995,7 @@ def AddRoutingBlock(name, Sink):
             subprocess.run([NWPath,"SetSinkVolume",name,str(0)])
         else:
             ApplyVolume()
-        SaveConfig()
+        SaveConfig("NullWire")
 
     tk.Checkbutton(Column0,text="Mute",variable=MuteVar,command=ToggleMute)\
         .grid(row=0, column=2, padx=5, pady=5, sticky="w")
@@ -1109,7 +1048,7 @@ def SelectSource(name, Sink, source, Popup):
 
     subprocess.run([NWPath,"ConnectSourceToSink",source,name])
 
-    SaveConfig()
+    SaveConfig("NullWire")
     RefreshRoutingUI()
     Popup.destroy()
 
@@ -1129,7 +1068,7 @@ def RemoveSource(Sink, source, Popup):
     if source in Sink["Sources"]:
         Sink["Sources"].remove(source)
     subprocess.run([NWPath,"RemoveSourceFromSink",source])
-    SaveConfig()
+    SaveConfig("NullWire")
     RefreshRoutingUI()
     Popup.destroy()
 
@@ -1198,7 +1137,7 @@ def CreateABlock(i):
                 return
 
             data["ID"] = new_id
-            SaveConfig()
+            SaveConfig("NullWire")
 
             subprocess.run(["pactl","set-sink-volume",new_id,f"{volumenumber}%"], check=True)
 
@@ -1238,7 +1177,7 @@ def CreateABlock(i):
         state = override_var.get()
 
         data["Dominant"] = state
-        SaveConfig()
+        SaveConfig("NullWire")
         if state:
             volume_controls.grid()
         else:
@@ -1302,7 +1241,7 @@ def CreateMBlock(i):
 
         volumenumber = scale.get()
         data["Volume"] = volumenumber
-        SaveConfig()
+        SaveConfig("NullWire")
         device_id = data.get("ID")
 
         if not device_id:
@@ -1323,7 +1262,7 @@ def CreateMBlock(i):
                 return
 
             data["ID"] = new_id
-            SaveConfig()
+            SaveConfig("NullWire")
 
             subprocess.run(["pactl","set-source-volume",new_id,f"{volumenumber}%"], check=True)
 
@@ -1364,7 +1303,7 @@ def CreateMBlock(i):
 
         state = override_var.get()
         data["Dominant"] = state
-        SaveConfig()
+        SaveConfig("NullWire")
 
         if state:
             volume_controls.grid()
@@ -1409,13 +1348,13 @@ def NullWireRebuildUI():
 
 def ClearOutput(key):
     Devices["A"][key] = None
-    SaveConfig()
+    SaveConfig("NullWire")
     NullWireRebuildUI()
     RefreshRoutingUI()
 
 def ClearInput(key):
     Devices["M"][key] = None
-    SaveConfig()
+    SaveConfig("NullWire")
     NullWireRebuildUI()
     RefreshRoutingUI()
 
@@ -1435,7 +1374,7 @@ def SelectOutputDevice(device, key, Popup):
         Devices["A"][key]["IsSink"] = True
     NullWireRebuildUI()
     RefreshRoutingUI()
-    SaveConfig()
+    SaveConfig("NullWire")
     Popup.destroy()
 
 def OpenInputPopup(targetKey):
@@ -1450,7 +1389,7 @@ def OpenInputPopup(targetKey):
 
 def SelectInputDevice(device, key, Popup):
     Devices["M"][key] = {"Name": device["UIName"],"ID": device["SystemID"],"Volume": 100,"Dominant": False}
-    SaveConfig()
+    SaveConfig("NullWire")
     NullWireRebuildUI()
     RefreshRoutingUI()
     Popup.destroy()
@@ -1753,7 +1692,7 @@ def UpdateStartDetection(v):
     global StartDetection
     StartDetection = int(v) / 1000
     NullCursorStartValueLabel.config(text=f"{int(v)}   |") 
-    SaveConfig()
+    SaveConfig("NullCursor")
 
 def OnHoverEnter(e, which):
     global Overlays, HideJob
@@ -1774,7 +1713,7 @@ def UpdateEdgeBuffer(*args):
     global EdgeBuffer
     try:
         EdgeBuffer = int(NullCursorEdgeBufferVar.get())
-        SaveConfig()
+        SaveConfig("NullCursor")
     except:
         pass
 
@@ -1782,7 +1721,7 @@ def UpdateScanTime(v):
     global ScanTime
     ScanTime = float(v)
     NullCursorScanValueLabel.config(text=f"{ScanTime:.3f}")
-    SaveConfig()
+    SaveConfig("NullCursor")
 
 def CenterOnRoot(Popup, width, height):
     Root.update_idletasks()
@@ -1810,7 +1749,7 @@ def SetActiveProfile(Name, Apply=True):
             return
         ApplyProfileLayout(Name)
 
-    SaveConfig()
+    SaveConfig("NullCursor")
 
 def ApplyProfileLayout(Name):
     if Name not in Profiles:
@@ -1861,7 +1800,7 @@ def DeleteProfile(Name, Frame):
         New = list(Profiles.keys())[0]
         SetActiveProfile(New)
 
-    SaveConfig()
+    SaveConfig("NullCursor")
 
 def OpenRemoveWarp(Name):
     print("Remove warp for", Name)
@@ -1973,7 +1912,7 @@ def OpenWarpConfigPopup(ProfileName, SourceID, TargetID):
 
         RefreshWarpDisplay(ProfileName)
         Popup.destroy()
-        SaveConfig()
+        SaveConfig("NullCursor")
 
     tk.Button(Frame, text="Confirm", command=Confirm).pack(pady=5)
 
@@ -2108,7 +2047,7 @@ def CreateProfile():
     CreateProfileBox(Name)
     NullCursorProfileNameVar.set("")
     SetActiveProfile(Name)
-    SaveConfig()
+    SaveConfig("NullCursor")
 
 def BuildUIFromProfiles():
     for w in NullCursorProfileContainer.winfo_children():
@@ -2281,7 +2220,7 @@ def ToggleNullCursor():
             relwidth=1,
             relheight=1
         )
-    SaveConfig()
+    SaveConfig("NullCursor")
 
 # ————————————————————————————————————————————————————————————
 # NullProton
@@ -2334,7 +2273,7 @@ def AddGameRow(State=None, Loading=False):
         Frame.destroy()
         ProtonGameRows.pop(Index)
         ProtonGames.pop(Index)
-        SaveConfig()
+        SaveConfig("NullProton")
         for i, Row in enumerate(ProtonGameRows):
             Row.grid_configure(row=i)
 
@@ -2356,7 +2295,7 @@ def AddGameRow(State=None, Loading=False):
     def UpdateState():
         State["CloseToTray"] = CloseVar.get()
         State["MinimizeOnLaunch"] = MinVar.get()
-        SaveConfig()
+        SaveConfig("NullProton")
 
     CloseVar.trace_add("write", lambda *args: UpdateState())
     MinVar.trace_add("write", lambda *args: UpdateState())
@@ -2370,7 +2309,7 @@ def AddGameRow(State=None, Loading=False):
         if Path:
             State["Path"] = Path
             PathVar.set(os.path.basename(Path))
-            SaveConfig()
+            SaveConfig("NullProton")
 
     tk.Button(Frame, text="Browse", width=8, command=Browse)\
         .grid(row=0, column=5, padx=3)
@@ -2407,7 +2346,7 @@ def AddGameRow(State=None, Loading=False):
     RefreshRowUI(len(ProtonGameRows) - 1)
 
     if not Loading:
-        SaveConfig()
+        SaveConfig("NullProton")
 
 def UpdateOverlay():
     while not LogQueue.empty():
@@ -2432,7 +2371,7 @@ def LaunchGame(State, Mode, RowIndex):
         
         if Mode == "Linux":
             State["LastProton"] = Mode
-            SaveConfig()
+            SaveConfig("NullProton")
             Root.after(0, lambda: RefreshRowUI(RowIndex))
             Root.after(0, ShowOverlay)
             LogQueue.put("🐧 Launching (Linux)...")
@@ -2503,7 +2442,7 @@ def LaunchGame(State, Mode, RowIndex):
         LogQueue.put("\n✅ Game launched")
 
         State["LastProton"] = Mode
-        SaveConfig()
+        SaveConfig("NullProton")
         Root.after(0, lambda: RefreshRowUI(RowIndex))
         if State.get("MinimizeOnLaunch"):
                 Root.after(0, Root.iconify)
@@ -3091,9 +3030,9 @@ def FinishRip():
 
 def SoundPlayer():
 
-    global LoadedSounds, ThreadsFinished
+    global LoadedSounds
 
-    ThreadsFinished +=1
+    
     print("Sound Player Initialized")
 
     while True:
@@ -3139,7 +3078,7 @@ def SoundPlayer():
 
             if not FirstLoop:
                 FirstLoop = True
-                ThreadsFinished +=1
+                
                 print("Sound Player Done")
 
         except Exception as E:
@@ -3282,7 +3221,7 @@ def DetectKey(Button, Target, Field, Timeout=5):
         Button.config(text="Set Key")
 
         BuildGlobalUInputDevice()
-        SaveConfig()
+        SaveConfig("NullMidi")
         Cleanup()
 
 
@@ -3365,7 +3304,7 @@ def DetectKey(Button, Target, Field, Timeout=5):
 
                 BuildGlobalUInputDevice()
 
-                SaveConfig()
+                SaveConfig("NullMidi")
 
                 Cleanup()
 
@@ -3392,7 +3331,7 @@ def DetectKey(Button, Target, Field, Timeout=5):
 
             BuildGlobalUInputDevice()
 
-            SaveConfig()
+            SaveConfig("NullMidi")
 
             Cleanup()
 
@@ -3699,7 +3638,7 @@ def DetectNote(Button, Device, Target, Field, Timeout=5):
 
         Target[Field] = None
         Button.config(text="Set Midi")
-        SaveConfig()
+        SaveConfig("NullMidi")
         Cleanup()
 
     def OnPress(Event):
@@ -3727,7 +3666,7 @@ def DetectNote(Button, Device, Target, Field, Timeout=5):
                         if Msg.type == "note_on":
                             Target[Field] = Msg.note
                             Button.config(text=str(Msg.note))
-                            SaveConfig()
+                            SaveConfig("NullMidi")
                             Cleanup()
                             return
                     time.sleep(0.01)
@@ -4125,7 +4064,7 @@ def SearchForSoundFile(Drum, var, Field):
         Drum[Field] = path
         var.set(path)
 
-        SaveConfig()
+        SaveConfig("NullMidi")
 
 #This is probably what you're looking for vex.
 def AddMidiRow(Row=None, Loading=False):
@@ -4269,7 +4208,7 @@ def AddMidiRow(Row=None, Loading=False):
 
     def UpdateActiveState():
         Row["Active"] = ActiveMidiDevice.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
 
     def UpdateMuted():
         Row["Mute"] = MuteMidiDevice.get()
@@ -4281,15 +4220,15 @@ def AddMidiRow(Row=None, Loading=False):
             for widget, data in SoundWidgets.items():
                 widget.grid(row=data['row'],column=data['column'],sticky=data['sticky'],padx=data['padx'],pady=data['pady'])
 
-        SaveConfig()
+        SaveConfig("NullMidi")
 
     def UpdateDynamics():
         Row["DynamicVolume"] = DynamicVolumeCheck.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
 
     def UpdateKeyInputs():
         Row["SendKeys"] = SendKeysVar.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
 
     BasicTopRowCollapseButton = tk.Button(BasicTopRow, text="▼", command=lambda:CollapseRow(Row), width = 2)
     BasicTopRowCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
@@ -4322,7 +4261,7 @@ def AddMidiRow(Row=None, Loading=False):
 
     def UpdateRowName(Row):
         Row['RowName'] = RowName.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
 
     BasicTopRowNameLabel = tk.Label(BasicTopRow, text="Name:")
     BasicTopRowNameLabel.grid(row=0, column=6, sticky="e", padx=2)
@@ -4333,7 +4272,7 @@ def AddMidiRow(Row=None, Loading=False):
 
     def UpdateMidiDevice(Event=None):
         Row["Device"] = MidiDeviceVar.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
 
     MidiDeviceVar = tk.StringVar(value=Row.get("Device", ""))
     BasicTopRowMidiDeviceDropDown = ttk.Combobox(BasicTopRow, textvariable=MidiDeviceVar, state="readonly",values=GetPorts())
@@ -4374,7 +4313,7 @@ def AddMidiRow(Row=None, Loading=False):
             Row['Keyboard'] = True
             KeyboardRow.pack(fill="x", padx=5, pady=5)
             BasicTopRowKeyboardToggle.grid()
-        SaveConfig()
+        SaveConfig("NullMidi")
     
 
     # --------------- Drums
@@ -4533,7 +4472,7 @@ def AddMidiRow(Row=None, Loading=False):
         def RemoveDrum(Drum):
             Row["DrumList"].remove(Drum)
             MainDrumFrame.destroy()
-            SaveConfig()
+            SaveConfig("NullMidi")
 
         def SwitchDrumType(Which, Loading=False):
             MainDrumRowToggles.grid_forget()
@@ -4592,7 +4531,7 @@ def AddMidiRow(Row=None, Loading=False):
                         
                         
 
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 DrumRowDrumToMainToggle = tk.Checkbutton(DrumRowTopRow, text="Pad", variable=DrumRowAlwaysTruePad, command=lambda:SwitchDrumType("Main"))
                 DrumRowDrumToMainToggle.grid(row=0, column=1, sticky="ew", padx=2)
@@ -4604,7 +4543,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateDrumName(Row):
                     Drum['DrumName'] = DrumName.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 DrumRowDrumName = tk.Entry(DrumRowTopRow, textvariable=DrumName, width=30)
                 DrumRowDrumName.grid(row=0, column=4, sticky="ew", padx=2)
@@ -4682,15 +4621,15 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateCenterVolume(*args):
                     Drum["CenterVolume"] = CenterVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateCenterGhost(*args):
                     Drum["CenterGhostNoteThreshold"] = CenterGhostNote.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateCenterSlam(*args):
                     Drum["CenterSlamNoteThreshold"] = CenterSlam.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 DrumRowCenterGhostLabel = tk.Label(DrumCenterSounds, text= "Ghost Note\n Velocity Cap", width = 12, height=2)
                 DrumRowCenterGhostLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -4776,15 +4715,15 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateRimVolume(*args):
                     Drum["RimVolume"] = RimVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateRimGhost(*args):
                     Drum["RimGhostNoteThreshold"] = RimGhostNote.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateRimSlam(*args):
                     Drum["RimSlamNoteThreshold"] = RimSlam.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 DrumRowRimGhostLabel = tk.Label(DrumRimSounds, text= "Ghost Note\n Velocity Cap", width = 12, height=2)
                 DrumRowRimGhostLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -4855,7 +4794,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                         
                         
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 CymbalRowCymbalToMainToggle = tk.Checkbutton(CymbalRowTopRow, text="Cymbals", variable=DrumRowAlwaysTrueCymbal, command=lambda:SwitchDrumType("Main"))
                 CymbalRowCymbalToMainToggle.grid(row=0, column=1, sticky="ew", padx=2)
@@ -4867,7 +4806,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateDrumName(Row):
                     Drum['DrumName'] = CymbalName.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 CymbalRowCymbalName = tk.Entry(CymbalRowTopRow, textvariable=CymbalName, width=30)
                 CymbalRowCymbalName.grid(row=0, column=4, sticky="ew", padx=2)
@@ -4945,15 +4884,15 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateBellVolume(*args):
                     Drum["CenterVolume"] = BellVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateBellGhost(*args):
                     Drum["CenterGhostNoteThreshold"] = BellGhostNote.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateBellSlam(*args):
                     Drum["CenterSlamNoteThreshold"] = BellSlam.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 CymbalRowBellGhostLabel = tk.Label(CymbalRowBellSounds, text="Ghost Note\n Velocity Cap", width=12, height=2)
                 CymbalRowBellGhostLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -5039,15 +4978,15 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateEdgeVolume(*args):
                     Drum["RimVolume"] = EdgeVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateEdgeGhost(*args):
                     Drum["RimGhostNoteThreshold"] = EdgeGhostNote.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateEdgeSlam(*args):
                     Drum["RimSlamNoteThreshold"] = EdgeSlam.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 CymbalRowEdgeGhostLabel = tk.Label(CymbalRowEdgeSounds, text="Ghost Note\n Velocity Cap", width=12, height=2)
                 CymbalRowEdgeGhostLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -5131,15 +5070,15 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateBowVolume(*args):
                     Drum["BowVolume"] = BowVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateBowGhost(*args):
                     Drum["BowGhostNoteThreshold"] = BowGhostNote.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateBowSlam(*args):
                     Drum["BowSlamNoteThreshold"] = BowSlam.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 CymbalRowBowGhostLabel = tk.Label(CymbalRowBowSounds, text="Ghost Note\n Velocity Cap", width=12, height=2)
                 CymbalRowBowGhostLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -5222,7 +5161,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                         
                         
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 DrumRowDrumToMainToggle = tk.Checkbutton(KickRowTopRow, text="Bass", variable=DrumRowAlwaysTruePad, command=lambda:SwitchDrumType("Main"))
                 DrumRowDrumToMainToggle.grid(row=0, column=1, sticky="ew", padx=2)
@@ -5298,12 +5237,12 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateKickVolume(*args):
                     Drum["CenterVolume"] = CenterVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
 
                 def UpdateKickMinimumVelocity(*args):
                     Drum["KickDrumMinimumVelocity"] = KickDrumMinimumVelocityVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
 
                 DrumRowKickMinimumVelocityLabel = tk.Label(DrumRowKickSounds,text="Minimum Kick\nVelocity",width=12,height=2)
@@ -5370,7 +5309,7 @@ def AddMidiRow(Row=None, Loading=False):
                         HihatCollapseButton.config(text="▶")
                         if not Loading:
                             Drum['Collapsed'] = True
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 HihatCollapseButton = tk.Button(HihatRowTopRow, text="▼", command=lambda:CollapseHiHat(Drum, HihatContainer), width=2)
                 HihatCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
@@ -5443,11 +5382,11 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateClosedVolume(*args):
                     Drum["HiHatClosedVolume"] = ClosedVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateClosedThreshold(*args):
                     Drum["HiHatClosedThreshold"] = ClosedThresholdVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 HihatRowClosedThresholdLabel = tk.Label(HihatRowClosedSounds, text="Closed\nThreshold", width=12, height=2)
                 HihatRowClosedThresholdLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -5521,7 +5460,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateHalfVolume(*args):
                     Drum["HiHatHalfVolume"] = HalfVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 SetupSlider(HihatRowHalfVolumeSlider, HalfVolumeVar, 0, 100, UpdateHalfVolume)
 
@@ -5587,11 +5526,11 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateOpenVolume(*args):
                     Drum["HiHatOpenVolume"] = OpenVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 def UpdateOpenThreshold(*args):
                     Drum["HiHatOpenThreshold"] = OpenThresholdVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 HihatRowOpenThresholdLabel = tk.Label(HihatRowOpenSounds, text="Open\nThreshold", width=12, height=2)
                 HihatRowOpenThresholdLabel.grid(row=2, column=0, sticky="e", pady=(0,8))
@@ -5664,7 +5603,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateStompVolume(*args):
                     Drum["HiHatStompVolume"] = StompVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 SetupSlider(HihatRowStompVolumeSlider, StompVolumeVar, 0, 100, UpdateStompVolume)
 
@@ -5681,7 +5620,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateFadeIn(*args):
                     Drum["HiHatFadeIn"] = HihatOpenFadeInVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 SetupSlider(HihatRowOpenFadeInSlider, HihatOpenFadeInVar, 0, 500, UpdateFadeIn)
 
@@ -5698,7 +5637,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateHiHatOpenTime(*args):
                     Drum["HiHatOpenTime"] = HihatOpenTimeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 SetupSlider(HihatRowOpenTimeSlider, HihatOpenTimeVar, 0, 500, UpdateHiHatOpenTime)
 
@@ -5763,7 +5702,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateBellOpenVolume(*args):
                     Drum["HiHatBellOpenVolume"] = BellOpenVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 SetupSlider(HihatRowBellOpenVolumeSlider, BellOpenVolumeVar, 0, 100, UpdateBellOpenVolume)
 
@@ -5828,7 +5767,7 @@ def AddMidiRow(Row=None, Loading=False):
 
                 def UpdateBellClosedVolume(*args):
                     Drum["HiHatBellClosedVolume"] = BellClosedVolumeVar.get()
-                    SaveConfig()
+                    SaveConfig("NullMidi")
 
                 SetupSlider(HihatRowBellClosedVolumeSlider, BellClosedVolumeVar, 0, 100, UpdateBellClosedVolume)
 
@@ -5855,7 +5794,7 @@ def AddMidiRow(Row=None, Loading=False):
                 MainDrumRowToggles.grid(row=0, column=0, sticky="ew", padx=2)
 
 
-            SaveConfig()
+            SaveConfig("NullMidi")
 
         DrumRowDrumToggle = tk.Checkbutton(MainDrumRowToggles, text="Pad?", variable=DrumRowAlwaysFalsePad, command=lambda:SwitchDrumType("Pad"))
         DrumRowDrumToggle.grid(row=0, column=0, sticky="ew", padx=2)
@@ -5878,18 +5817,18 @@ def AddMidiRow(Row=None, Loading=False):
             elif Drum['Hihat']:
                 SwitchDrumType("Hihat", Loading)
 
-        SaveConfig()
+        SaveConfig("NullMidi")
     
     DrumGhostNoteVolume = tk.IntVar(value=Row.get("GhostNoteVolume", 10))
     DrumSlamNoteVolume = tk.IntVar(value=Row.get("SlamNoteVolume", 100))
 
     def UpdateGhostVolume(*args):
         Row["GhostNoteVolume"] = DrumGhostNoteVolume.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
     
     def UpdateSlamVolume(*args):
         Row["SlamNoteVolume"] = DrumSlamNoteVolume.get()
-        SaveConfig()
+        SaveConfig("NullMidi")
     
 
     DrumGhostVolumeLabel = tk.Label(DrumRow, text= "Ghost Note\n Volume", width = 12, height=2)
@@ -5928,7 +5867,7 @@ def AddMidiRow(Row=None, Loading=False):
     MidiRows.append(Row)
 
     if not Loading:
-        SaveConfig()
+        SaveConfig("NullMidi")
     else:
         if Row['Drums']:
             HideToggleRowShowOtherRow("Drums")
@@ -5944,7 +5883,7 @@ def AddMidiRow(Row=None, Loading=False):
 def RemoveMidiRow(Frame, Row):
     Frame.destroy()
     MidiRows.remove(Row)
-    SaveConfig()
+    SaveConfig("NullMidi")
 
 # ————————————————————————————————————————————————————————————
 # NullGit
@@ -6895,7 +6834,7 @@ def DownloadReleaseThread(Repo, StatusVar, SelectedAssets, Tag, Path, OpenOnFini
 
         Repo["InstalledReleaseTag"] = Tag
 
-        SaveConfig()
+        SaveConfig("NullGit")
 
         Root.after(
             0,
@@ -7163,7 +7102,7 @@ def AddRepoObject(Repo):
             if (Data and Data.get("tag_name") and isinstance(Data.get("assets"),list) and len(Data.get("assets")) > 0):
                 RepoOptions.append({"Label":"Latest [Release]","Type":"Release","Value":"latest"})
     except:
-        print("Release Detection Error:",e)
+        print("Release Detection Error:")
     DisplayValues = [x["Label"] for x in RepoOptions]
     SavedBranch = Repo.get("CurrentBranch", f"{GetCurrentBranch(Repo['Path'])} [Branch]")
     CurrentBranch = tk.StringVar(value=SavedBranch)
@@ -7177,7 +7116,7 @@ def AddRepoObject(Repo):
         if Match["Type"] == "Branch":
             ChangeBranch(Repo, Match["Value"], StatusVar)
         StatusVar.set(GetRepoStatus(Repo))
-        SaveConfig()
+        SaveConfig("NullGit")
         Frame.focus_set()
 
     BranchBox = ttk.Combobox(Frame, values=DisplayValues, textvariable=CurrentBranch, state="readonly")
@@ -7277,7 +7216,7 @@ def AddRepo(Path):
         "Owner": IsOwner(Path),
     }
 
-    SaveConfig()
+    SaveConfig("NullGit")
     BuildRepoList()
 
 def OpenRepo(Repo, LocalOrNet=True):
@@ -7323,7 +7262,7 @@ def DeleteRepoInNull(Repo):
     if not Confirm:
         return
     Repos.pop(Path, None)
-    SaveConfig()
+    SaveConfig("NullGit")
     BuildRepoList()
     NullGitNotebook.select(NullGitMainPage)
 
@@ -7354,7 +7293,7 @@ def CreateBranchOnGit():
         capture_output=True,
         text=True
         )
-        SaveConfig()
+        SaveConfig("NullGit")
         BuildRepoList()
     except Exception as e:
         messagebox.showerror(
@@ -7385,7 +7324,7 @@ def RenameBranchOnGit():
             text=True
         )
         CurrentManagedRepo["CurrentBranch"] = f"{NewBranch} [Branch]"
-        SaveConfig()
+        SaveConfig("NullGit")
         BuildRepoList()
         messagebox.showinfo(
             "Branch Renamed",
@@ -7470,7 +7409,7 @@ def DeleteBranchOnGit():
             capture_output=True,
             text=True
             )
-        SaveConfig()
+        SaveConfig("NullGit")
         BuildRepoList()
         NullGitNotebook.select(
             NullGitMainPage
@@ -7837,7 +7776,7 @@ def StashAndPull():
         )
 
         BuildRepoList()
-        SaveConfig()
+        SaveConfig("NullGit")
 
     except Exception as e:
         messagebox.showerror(
@@ -7875,11 +7814,77 @@ Notebook.add(NullGit, text = "NullGit")
 # Null Suite UI
 # ------------------------------
 NullSuiteList = ScrollableFrame(NullSuite)
-NullSuiteList.grid(row=0,column=0, sticky="ensw")
+NullSuiteList.grid(row=1,column=0, sticky="ensw")
 
-NullSuite.rowconfigure(0,weight=1)
-NullSuite.rowconfigure(1,weight=0)
+NullSuiteToggles = tk.Frame(NullSuite)
+NullSuiteToggles.grid(row=0,column=0, sticky="ew")
+NullSuiteToggles.rowconfigure(0,weight=1)
+NullSuiteToggles.columnconfigure(0,weight=0)
+NullSuiteToggles.columnconfigure(1,weight=0)
+NullSuiteToggles.columnconfigure(2,weight=0)
+NullSuiteToggles.columnconfigure(3,weight=0)
+NullSuiteToggles.columnconfigure(4,weight=0)
+NullSuiteToggles.columnconfigure(5,weight=0)
+NullSuiteToggles.columnconfigure(6,weight=0)
+NullSuiteToggles.columnconfigure(7,weight=0)
+NullSuiteToggles.columnconfigure(8,weight=0)
+
+
+def UpdateStartUpToggles(Which):
+    
+    if Which == "Wire":
+        StartUpNullWire()
+
+    elif Which == "Cursor":
+        StartUpNullCursor()
+
+    elif Which == "Midi":
+        StartUpNullMidi()
+
+    elif Which == "Proton":
+        StartUpNullProton()
+
+    elif Which == "Rip":
+        StartUpNullRip()
+
+    elif Which == "Git":
+        StartUpNullGit()
+
+    SaveConfig("NullSuite")
+    return
+
+NullWireActivator = tk.Checkbutton(NullSuiteToggles, text="NullWire?", variable=NullWireActive, command=lambda: UpdateStartUpToggles("Wire"))
+NullWireActivator.grid(row=0,column=0, padx=1,pady=1)
+
+NullCursorActivator = tk.Checkbutton(NullSuiteToggles, text="NullCursor?", variable=NullCursorActive,command=lambda: UpdateStartUpToggles("Cursor"))
+NullCursorActivator.grid(row=0,column=1, padx=1,pady=1)
+
+NullMidiActivator = tk.Checkbutton(NullSuiteToggles, text="NullMidi?", variable=NullMidiActive,command=lambda: UpdateStartUpToggles("Midi"))
+NullMidiActivator.grid(row=0,column=2, padx=1,pady=1)
+
+NullProtonActivator = tk.Checkbutton(NullSuiteToggles, text="NullProton?", variable=NullProtonActive,command=lambda: UpdateStartUpToggles("Proton"))
+NullProtonActivator.grid(row=0,column=3, padx=1,pady=1)
+
+NullRipActivator = tk.Checkbutton(NullSuiteToggles, text="NullRip?", variable=NullRipActive,command=lambda: UpdateStartUpToggles("Rip"))
+NullRipActivator.grid(row=0,column=4, padx=1,pady=1)
+
+NullGitActivator = tk.Checkbutton(NullSuiteToggles, text="NullGit?", variable=NullGitActive,command=lambda: UpdateStartUpToggles("Git"))
+NullGitActivator.grid(row=0,column=5, padx=1,pady=1)
+
+StartMinimizedActivator = tk.Checkbutton(NullSuiteToggles, text="Start Minimized?", variable=StartMinimizedActive,command=lambda: UpdateStartUpToggles("Start"))
+StartMinimizedActivator.grid(row=0,column=8, padx=1,pady=1)
+
+StartInTrayActivator = tk.Checkbutton(NullSuiteToggles, text="Start In Tray?", variable=StartInTrayActive,command=lambda: UpdateStartUpToggles("Tray"))
+StartInTrayActivator.grid(row=0,column=9, padx=1,pady=1)
+
+DontLoadAppsActivator = tk.Checkbutton(NullSuiteToggles, text="Dont Load Apps On Startup", variable=DontLoadAppsOnStartUpActive,command=lambda: UpdateStartUpToggles("Apps"))
+DontLoadAppsActivator.grid(row=0,column=10, padx=1,pady=1)
+
+
+NullSuite.rowconfigure(0,weight=0)
+NullSuite.rowconfigure(1,weight=1)
 NullSuite.rowconfigure(2,weight=0)
+NullSuite.rowconfigure(3,weight=0)
 NullSuite.columnconfigure(0,weight=1)
 
 NullSuiteListInner = NullSuiteList.Inner
@@ -7959,7 +7964,7 @@ def MakeProtonRow(row, key, label):
 
         if path:
             ProtonVars[key].set(path)
-            SaveConfig()
+            SaveConfig("NullProton")
 
     tk.Button(ProtonTop, text="Browse", command=Pick).grid(row=row, column=2, sticky="ew")
 
@@ -8435,19 +8440,13 @@ ForcePush.grid(row=0,column=1,sticky="ew",padx=5,pady=2, columnspan=2)
 
 
 def NullCursorLoop():
-    global LastWarpTime, LastOutputs, LastInputs, LastSources, LoadTimes, ThreadsFinished
-
-    Start = time.time()
-
-    FirstLoop = True
+    global LastWarpTime, LastOutputs, LastInputs, LastSources, LoadTimes
     
     while True:
-        if not ScanForMouse:
-            if FirstLoop:
-                FirstLoop = False
-                ThreadsFinished +=1
-                print("NullCursorDone")
-                LoadTimes['NullCursor'] = (time.time() - Start)
+
+        if NullCursorActive.get() == False:
+            time.sleep(1)
+            continue
 
 
         if ScanForMouse:
@@ -8508,16 +8507,10 @@ def NullCursorLoop():
                 ExecuteWarp(TargetID, TargetEdge, Bounds, ratio)
                 break
 
-        if FirstLoop:
-            FirstLoop = False
-            ThreadsFinished +=1
-            print("NullCursorDone")
-            LoadTimes['NullCursor'] = (time.time() - Start)
-
         time.sleep(max(ScanTime, WarpCooldown))
 
 def NullWireLoop():
-    global LastOutputs, LastInputs, LastSources, SystemLoading, LoadTimes, ThreadsFinished
+    global LastOutputs, LastInputs, LastSources, SystemLoading, LoadTimes
     LastOutputs = set()
     LastInputs = set()
     LastSources = set()
@@ -8528,6 +8521,12 @@ def NullWireLoop():
     FirstLoop = True
 
     while True:
+
+        if NullWireActive.get() == False:
+            time.sleep(1)
+            continue
+
+
         if tick == 0:
             RefreshOutputDevices()
             if OutputDevices != LastOutputs:
@@ -8556,17 +8555,14 @@ def NullWireLoop():
         if FirstLoop:
             if tick == 0:
                 FirstLoop = False
-                ThreadsFinished +=1
+                
                 print("NullWireDone")
                 LoadTimes["NullWire"] = (time.time() - Start)
         else:
             time.sleep(1)
 
 def NullMidiLoop():
-    global LoadTimes, ThreadsFinished
-
-    Start = time.time()
-    FirstLoop = True
+    global LoadTimes
 
     while True:
         Ports = mido.get_input_names()
@@ -8594,23 +8590,16 @@ def NullMidiLoop():
             if Device not in NeededDevices:
                 StopMidiListener(Device)
 
-        if FirstLoop:
-            FirstLoop = False
-            ThreadsFinished +=1
-            print("NullMidiDone")
-            LoadTimes['NullMidi'] = (time.time() - Start)
-
         time.sleep(1)
 
 def NullGitLoop():
-    global ThreadsFinished
     FirstLoop = False
 
     while True:
         if SystemLoading:
             if not FirstLoop:
                 FirstLoop = True
-                ThreadsFinished +=1
+                
                 print("NullGitDone")
             time.sleep(1)
             continue
@@ -8635,27 +8624,29 @@ Root.protocol("WM_DELETE_WINDOW", HideToTray)
 def Startup():
     global SystemLoading
     SystemLoading = True
-
-    LoadConfig()
     WaitForLoad()
     
+def WaitForLoad():
+    threading.Thread(target=StartTray, daemon=True).start()
+    threading.Thread(target=WatchShowSignal, daemon=True).start()
+    threading.Thread(target=NullCursorLoop, daemon=True).start()
+    threading.Thread(target=NullMidiLoop, daemon=True).start()
+    threading.Thread(target=RunUpdateCheck, daemon=True).start()
+    threading.Thread(target=NullWireLoop, daemon=True).start()
+    threading.Thread(target=SoundPlayer, daemon=True).start()
+    threading.Thread(target=NullGitLoop, daemon=True).start()
+    LoadConfig()
+    
+    DoneLoadingCheck()
 
-def ThreadChecker(ThreadCount):
-    global Butts
 
-    Butts.set(f"Starting Background Tasks/Loops:  {ThreadsFinished}/{ThreadCount}")
-
-    if ThreadsFinished != ThreadCount:
-        Root.after(10, lambda: ThreadChecker(ThreadCount))
-    else:
-        Butts.set(f"Loading Done \n Inserting your save data into Apps")
-        Root.after(1000, lambda: FinallyReady())
-
-    return
-
-def FinallyReady():
+def DoneLoadingCheck():
     global SystemLoading
-    print("Finished Startup")
+
+    if ProgramCount != LoadCompleted:
+        Root.after(10, DoneLoadingCheck)
+        return
+
     SystemLoading = False
     try:
         LoadPopup.grab_release()
@@ -8664,27 +8655,211 @@ def FinallyReady():
     LoadPopup.destroy()
     Root.focus_force()
 
-def WaitForLoad():
-    global SystemLoading, Butts
 
-    LoadPopup.update_idletasks()
 
-    if LoadCompleted >= ProgramCount:
-        ThreadCount = 8
-        threading.Thread(target=StartTray, daemon=True).start()
-        threading.Thread(target=WatchShowSignal, daemon=True).start()
-        threading.Thread(target=NullCursorLoop, daemon=True).start()
-        threading.Thread(target=NullMidiLoop, daemon=True).start()
-        threading.Thread(target=RunUpdateCheck, daemon=True).start()
-        threading.Thread(target=NullWireLoop, daemon=True).start()
-        threading.Thread(target=SoundPlayer, daemon=True).start()
-        threading.Thread(target=NullGitLoop, daemon=True).start()
-        
-        ThreadChecker(ThreadCount)
-        return
+
+
+
+def StartUpNullWire():
+    global Sinks, Devices, LoadCompleted
     
-    Root.after(10, WaitForLoad)
+
+    if NullWireActive.get() == True:
+
+        if not os.path.isfile(ConfigPath):
+            return False
+
+        try:
+            with open(ConfigPath, "r") as f:
+                data = json.load(f)
+                wire = data.get("NullWire", {})
+
+            Sinks.clear()
+            Sinks.update(wire.get("Sinks", {}))
+
+            Devices["A"].update(wire.get("DevicesA", {}))
+            Devices["M"].update(wire.get("DevicesM", {}))
+
+            subprocess.run([NWPath, "ClearSinks"])
+
+            for name, sink in Sinks.items():
+                subprocess.run([NWPath, "CreateSink", name])
+                for d, enabled in sink["Outputs"].items():
+                    device = Devices["A"].get(d)
+                    if not device or not enabled:
+                        continue
+                    subprocess.run([NWPath,"ConnectSinkToAux",name,device["ID"],str(int(sink["Mono"]))])
+                for d, enabled in sink["Inputs"].items():
+                    device = Devices["M"].get(d)
+                    if not device or not enabled:
+                        continue
+                    subprocess.run([NWPath,"ConnectMicToSink",device["ID"],name])
+                for src in sink["Sources"]:
+                    subprocess.run([NWPath,"ConnectSourceToSink",src,name])
+
+            NullWireRebuildUI()
+            RefreshRoutingUI()
+            
+            Notebook.add(NullWire, text="NullWire")
+        except Exception as e:
+            print("LoadConfig failed:", e)
+    else:
+        Notebook.forget(NullWire)
+    
+    LoadCompleted += 1
+    return
+
+def StartUpNullMidi():
+    global MixerInitialized, MidiRows, LoadCompleted
+    if NullMidiActive.get() == True:
+
+        midi = None
+        if not os.path.isfile(ConfigPath):
+            return False
+
+        try:
+            with open(ConfigPath, "r") as f:
+                data = json.load(f)
+                midi = data.get("NullMidi", {})
+
+            for row in midi.get("MidiRows", []):
+                AddMidiRow(row, True)
+
+        except Exception as e:
+            print("LoadConfig failed:", e)
+            return False
         
+        if MixerInitialized ==False:
+            pygame.mixer.init(buffer=256)
+            pygame.mixer.set_num_channels(96)
+            MixerInitialized = True
+        
+        BuildGlobalUInputDevice()
+
+        Notebook.add(NullMidi, text="NullMidi")
+    else:
+        Notebook.forget(NullMidi)
+
+    LoadCompleted += 1
+    return
+
+def StartUpNullProton():
+    global ProtonGames, LoadCompleted
+   
+    if NullProtonActive.get() == True:
+        proton = None
+        if not os.path.isfile(ConfigPath):
+            return
+
+        try:
+            with open(ConfigPath, "r") as f:
+                data = json.load(f)
+                proton = data.get("NullProton", {})
+        except Exception as e:
+            print("LoadConfig failed:", e)
+            return
+
+        ProtonVars["Default"].set(proton.get("Default", "[ not set ]"))
+        ProtonVars["A"].set(proton.get("A", "[ not set ]"))
+        ProtonVars["B"].set(proton.get("B", "[ not set ]"))
+
+        ProtonGames.clear()
+        ProtonGames.extend(proton.get("Games", []))
+
+        for Game in ProtonGames.copy():
+            AddGameRow(Game, True)
+
+        Notebook.add(NullProton, text="NullProton")
+    else:
+        Notebook.forget(NullProton)
+
+    LoadCompleted += 1
+    return
+
+def StartUpNullRip():
+    global LoadCompleted
+    if NullRipActive.get() == True:
+        Notebook.add(NullRip, text="NullRip")
+    else:
+        Notebook.forget(NullRip)
+
+    LoadCompleted += 1
+    return
+
+def StartUpNullGit():
+    global Repos, LoadCompleted, SystemLoading
+    
+    if NullGitActive.get() == True:
+        SystemLoading = True
+        repos = None
+        if not os.path.isfile(ConfigPath):
+            return
+
+        try:
+            with open(ConfigPath, "r") as f:
+                data = json.load(f)
+                repos = data.get("NullGit", {})
+        except Exception as e:
+            print("LoadConfig failed:", e)
+            return
+        
+        Repos = repos.get("Repos", {})
+        BuildRepoList()
+
+
+        Notebook.add(NullGit, text="NullGit")
+    
+    else:
+        Notebook.forget(NullGit)
+    LoadCompleted += 1
+    SystemLoading = False
+    return
+
+def StartUpNullCursor():
+    global Profiles, ActiveProfile, ScanForMouse, LoadCompleted, SystemLoading
+    
+    if NullCursorActive.get() == True:
+        SystemLoading = True
+        cursor = None
+        if not os.path.isfile(ConfigPath):
+            return False
+
+        try:
+            with open(ConfigPath, "r") as f:
+                data = json.load(f)
+                cursor = data.get("NullCursor", {})
+
+        except Exception as e:
+            print("LoadConfig failed:", e)
+            return False
+
+
+        Profiles.clear()
+        Profiles.update(cursor.get("Profiles", {}))
+        ActiveProfile = cursor.get("ActiveProfile")
+        ScanForMouse = cursor.get("ScanForMouse", False)
+        if len(Profiles) == 0:
+            Profiles["Default"] = {
+                "Layout": CaptureLayout(),
+                "Warps": {}
+            }
+            ActiveProfile = "Default"
+            SaveConfig("NullCursor")
+        BuildUIFromProfiles()
+        NullCursorEnabledVar.set(ScanForMouse)
+        ToggleNullCursor()
+
+        Notebook.add(NullCursor, text="NullCursor")
+    else:
+        Notebook.forget(NullCursor)
+
+    SystemLoading = False
+    LoadCompleted += 1
+    return
+
+
+
+
  
-Root.after(5, Startup)
+Root.after(100, Startup)
 Root.mainloop()
