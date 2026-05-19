@@ -617,6 +617,12 @@ class ScrollableFrame(tk.Frame):
 
     def OnMouseWheel(self, event):
 
+        ContentHeight = self.Inner.winfo_reqheight()
+        ViewHeight = self.Canvas.winfo_height()
+
+        if ContentHeight <= ViewHeight:
+            return
+
         if isinstance(event.widget, (tk.Scale, ttk.Scale)):
             return
 
@@ -821,14 +827,14 @@ def AddRoutingObject():
         name = f"Sink {len(Sinks)}"
 
     name = name + "_NullWire"
-    new = {"Mono": False, "Mute":False, "Outputs": {f"A{i}": False for i in range(1, 21)},"Inputs":  {f"M{i}": False for i in range(1, 21)},"Sources": [],"Volume": 100,}
+    new = {"Mono": False, "Mute":False, "Outputs": {f"A{i}": False for i in range(1, 21)},"Inputs":  {f"M{i}": False for i in range(1, 21)},"Sources": [],"Volume": 100,"DeleteConfirmation": False}
     Sinks[name] = new
     subprocess.run([NWPath,"CreateSink",name])
     SaveConfig("NullWire")
     RefreshRoutingUI()
     NullWireRoutingEntry.delete(0, tk.END)
 
-def AddRoutingBlock(name, Sink):
+def AddRoutingBlock(NameOfSink, Sink):
     Frame = tk.Frame(NullWireRoutingObjects, bd=2, relief="solid")
     Frame.pack(fill="x", padx=5, pady=5)
     Frame.columnconfigure(0, weight=1)
@@ -845,9 +851,36 @@ def AddRoutingBlock(name, Sink):
     # ==============================
     # TOP ROW (DELETE + NAME)
     # ==============================
-    def Delete():
-        del Sinks[name]
-        subprocess.run([NWPath,"DeleteSink",name,])
+    def Delete(NameOfSink, Sink, Button,Timeout=4):
+        global Sinks
+
+        EndTime = time.time() + (Timeout)
+
+        def Tick(Sink):
+            if Sink == None:
+                return
+            else:
+                Remaining = int(EndTime - time.time())
+                if Remaining <= 0:
+                    if not Button.winfo_exists():
+                        return
+                    Button.config(text="Delete Wire")
+                    Sink['DeleteConfirmation'] = False
+                    return
+                if not Button.winfo_exists():
+                    return
+                else:
+                    Button.config(text=f"R U Sure? {Remaining}")
+                    Root.after(1000, Tick, Sink)
+
+        if Sink['DeleteConfirmation'] == False:
+            Sink['DeleteConfirmation'] = True
+            Tick(Sink)
+            return
+        
+
+        Sinks.pop(NameOfSink)
+        subprocess.run([NWPath,"DeleteSink",NameOfSink,])
         SaveConfig("NullWire")
         RefreshRoutingUI()
 
@@ -859,20 +892,15 @@ def AddRoutingBlock(name, Sink):
     Column0.columnconfigure(3, weight=2) 
     Column0.columnconfigure(3, weight=1) 
 
-    tk.Button(Column0, text="Delete", command=Delete)\
-        .grid(row=0, column=0, padx=5, pady=5, sticky="w")
+    DeleteSinkButton = tk.Button(Column0, text="Delete Wire", command=lambda: Delete(NameOfSink, Sink,DeleteSinkButton), width = 12)
+    DeleteSinkButton.grid(row=0, column=0, padx=5, pady=5, sticky="w")
     
-
-    # this is just here cause i added it in 4.0, and sinks created wont have the data sooooo suck it. 
-    if "Mute" not in Sink:
-        Sink["Mute"] = False
-
     MonoVar = tk.BooleanVar(value=Sink.get("Mono", False))
     MuteVar = tk.BooleanVar(value=Sink.get("Mute", False))
     InnerFrame = tk.Frame(Column0, bd=2, relief="solid")
     InnerFrame.grid(row=0, column=3, sticky="ew", padx=2)
     InnerFrame.columnconfigure(0, weight=1)
-    display_name = name.replace("_NullWire", "")
+    display_name = NameOfSink.replace("_NullWire", "")
     tk.Label(InnerFrame, text=display_name, anchor="w")\
     .grid(row=0, column=0, sticky="ew")
     volume_frame = tk.Frame(Column0)
@@ -886,7 +914,7 @@ def AddRoutingBlock(name, Sink):
         volumenumber = scale.get()
         Sink["Volume"] = volumenumber
         SaveConfig("NullWire")
-        subprocess.run([NWPath,"SetSinkVolume",name,str(volumenumber)])
+        subprocess.run([NWPath,"SetSinkVolume",NameOfSink,str(volumenumber)])
 
     def ScheduleApply():
         nonlocal after_id
@@ -920,10 +948,10 @@ def AddRoutingBlock(name, Sink):
             DeviceData = Devices["A"].get(d)
             DeviceID = DeviceData["ID"]
             if v.get():
-                subprocess.run([NWPath,"ConnectSinkToAux",name,DeviceID,str(int(Sink["Mono"]))])
+                subprocess.run([NWPath,"ConnectSinkToAux",NameOfSink,DeviceID,str(int(Sink["Mono"]))])
                 Sink["Outputs"][d] = True
             else:
-                subprocess.run([NWPath,"RemoveSinkFromAux",name,DeviceID])
+                subprocess.run([NWPath,"RemoveSinkFromAux",NameOfSink,DeviceID])
                 Sink["Outputs"][d] = False
             SaveConfig("NullWire")
         cb = tk.Checkbutton(RowA,text=device,variable=var,width=3,command=Toggle,anchor="w")
@@ -954,10 +982,10 @@ def AddRoutingBlock(name, Sink):
         def Toggle(d=device, v=var):
             DeviceID = Devices["M"][d]["ID"]
             if v.get():
-                subprocess.run([NWPath,"ConnectMicToSink",DeviceID,name])
+                subprocess.run([NWPath,"ConnectMicToSink",DeviceID,NameOfSink])
                 Sink["Inputs"][d] = True
             else:
-                subprocess.run([NWPath,"RemoveMicFromSink",DeviceID,name])
+                subprocess.run([NWPath,"RemoveMicFromSink",DeviceID,NameOfSink])
                 Sink["Inputs"][d] = False
             SaveConfig("NullWire")
 
@@ -973,7 +1001,7 @@ def AddRoutingBlock(name, Sink):
     SRow = tk.Frame(Frame)
     SRow.grid(row=4, column=0, columnspan=3, sticky="ew", padx=5)
     SRow.columnconfigure(2, weight=1)
-    tk.Button(SRow, text="Attach", width=6, command=lambda: OpenAddSourcePopup(name, Sink))\
+    tk.Button(SRow, text="Attach", width=6, command=lambda: OpenAddSourcePopup(NameOfSink, Sink))\
     .grid(row=0, column=0, sticky="ew")
     tk.Button(SRow, text="Remove", width=6, command=lambda: OpenRemoveSourcePopup(Sink))\
     .grid(row=0, column=1, padx=(5,0), sticky="ew")
@@ -998,8 +1026,8 @@ def AddRoutingBlock(name, Sink):
                 continue
 
             DeviceID = DeviceData["ID"]
-            subprocess.run([NWPath,"RemoveSinkFromAux",name,DeviceID])
-            subprocess.run([NWPath,"ConnectSinkToAux",name,DeviceID,str(int(Sink["Mono"]))])
+            subprocess.run([NWPath,"RemoveSinkFromAux",NameOfSink,DeviceID])
+            subprocess.run([NWPath,"ConnectSinkToAux",NameOfSink,DeviceID,str(int(Sink["Mono"]))])
         SaveConfig("NullWire")
 
     tk.Checkbutton(Column0,text="Mono?",variable=MonoVar,command=ToggleMono)\
@@ -1012,7 +1040,7 @@ def AddRoutingBlock(name, Sink):
     def ToggleMute():
         Sink["Mute"] = MuteVar.get()
         if Sink['Mute']:
-            subprocess.run([NWPath,"SetSinkVolume",name,str(0)])
+            subprocess.run([NWPath,"SetSinkVolume",NameOfSink,str(0)])
         else:
             ApplyVolume()
         SaveConfig("NullWire")
@@ -1224,8 +1252,8 @@ def CreateABlock(i):
     tk.Button(btns, text="SET",
         command=lambda k=AKey: OpenOutputPopup(k)).pack(side="left")
 
-    tk.Button(btns, text="CLEAR",
-        command=lambda k=AKey: ClearOutput(k)).pack(side="left")
+    ClearButton = tk.Button(btns, text="CLEAR",command=lambda k=AKey: ClearOutput(k,ClearButton),width=11)
+    ClearButton.pack(side="left")
     
 def CreateMBlock(i):
     frame = tk.Frame(RightColumn, bd=1, relief="solid")
@@ -1346,8 +1374,8 @@ def CreateMBlock(i):
     tk.Button(btns, text="SET",
         command=lambda k=MKey: OpenInputPopup(k)).pack(side="left")
 
-    tk.Button(btns, text="CLEAR",
-        command=lambda k=MKey: ClearInput(k)).pack(side="left")
+    ClearButton = tk.Button(btns, text="CLEAR",command=lambda k=MKey: ClearInput(k,ClearButton),width=11)
+    ClearButton.pack(side="left")
     
 def BuildUI():
     for i in range(1, 21):
@@ -1366,13 +1394,75 @@ def NullWireRebuildUI():
     RightColumn.grid(row=0, column=2, sticky="nsew", padx=(2, 5))
     BuildUI()
 
-def ClearOutput(key):
+def ClearOutput(key, Button, Timeout=4):
+
+    if Devices["A"][key] == None:
+        return
+    else:
+        EndTime = time.time() + (Timeout)
+
+    def Tick(key):
+        if Devices["A"][key]== None:
+            return
+        else:
+            Remaining = int(EndTime - time.time())
+
+            if Remaining <= 0:
+                if not Button.winfo_exists():
+                    return
+                Button.config(text="CLEAR")
+                Devices["A"][key]['DeleteConfirmation'] = False
+                return
+            if not Button.winfo_exists():
+                return
+            else:
+                Button.config(text=f"R U Sure? {Remaining}")
+                Root.after(1000, Tick, key)
+        
+    if Devices["A"][key]['DeleteConfirmation'] == False:
+        Devices["A"][key]['DeleteConfirmation'] = True
+        Tick(key)
+        return 
+    
+    print("should be hitting true?")
+
     Devices["A"][key] = None
     SaveConfig("NullWire")
     NullWireRebuildUI()
     RefreshRoutingUI()
 
-def ClearInput(key):
+def ClearInput(key,Button, Timeout=4):
+    
+    if Devices["M"][key] == None:
+        return
+    else:
+        EndTime = time.time() + (Timeout)
+
+    def Tick(key):
+        if Devices["M"][key]== None:
+            return
+        else:
+            Remaining = int(EndTime - time.time())
+
+            if Remaining <= 0:
+                if not Button.winfo_exists():
+                    return
+                Button.config(text="CLEAR")
+                Devices["M"][key]['DeleteConfirmation'] = False
+                return
+            if not Button.winfo_exists():
+                return
+            else:
+                Button.config(text=f"R U Sure? {Remaining}")
+                Root.after(1000, Tick, key)
+        
+    if Devices["M"][key]['DeleteConfirmation'] == False:
+        Devices["M"][key]['DeleteConfirmation'] = True
+        Tick(key)
+        return 
+    
+
+
     Devices["M"][key] = None
     SaveConfig("NullWire")
     NullWireRebuildUI()
@@ -1389,7 +1479,7 @@ def OpenOutputPopup(targetKey):
         tk.Button(Popup,text=device["UIName"],command=lambda d=device: SelectOutputDevice(d, targetKey, Popup)).pack(fill="x")
 
 def SelectOutputDevice(device, key, Popup):
-    Devices["A"][key] = {"Name": device["UIName"],"ID": device["SystemID"],"Volume": 100,"Dominant": False,"IsSink": False}
+    Devices["A"][key] = {"Name": device["UIName"],"ID": device["SystemID"],"Volume": 100,"Dominant": False,"IsSink": False, "DeleteConfirmation": False}
     if "_NullWire" in device["SystemID"]:
         Devices["A"][key]["IsSink"] = True
     NullWireRebuildUI()
@@ -1408,7 +1498,7 @@ def OpenInputPopup(targetKey):
         tk.Button(Popup,text=device["UIName"],command=lambda d=device: SelectInputDevice(d, targetKey, Popup)).pack(fill="x")
 
 def SelectInputDevice(device, key, Popup):
-    Devices["M"][key] = {"Name": device["UIName"],"ID": device["SystemID"],"Volume": 100,"Dominant": False}
+    Devices["M"][key] = {"Name": device["UIName"],"ID": device["SystemID"],"Volume": 100,"Dominant": False,"DeleteConfirmation": False}
     SaveConfig("NullWire")
     NullWireRebuildUI()
     RefreshRoutingUI()
@@ -1809,8 +1899,34 @@ def ApplyProfileLayout(Name):
     except Exception as E:
         print("ApplyProfileLayout Error:", E)
 
-def DeleteProfile(Name, Frame):
+def DeleteProfile(Name,Button, Frame, Timeout=4):
     global ActiveProfile
+
+    EndTime = time.time() + (Timeout)
+
+    def Tick(Name):
+        if Name not in Profiles:
+            return
+        else:
+            Remaining = int(EndTime - time.time())
+            if Remaining <= 0:
+                if not Button.winfo_exists():
+                    return
+                Button.config(text="Delete Profile?")
+                Profiles[Name]['DeleteConfirmation'] = False
+                return
+            if not Button.winfo_exists():
+                return
+            else:
+                Button.config(text=f"R U Sure? {Remaining}")
+                Root.after(1000, Tick, Name)
+
+    if Profiles[Name]['DeleteConfirmation'] == False:
+        Profiles[Name]['DeleteConfirmation'] = True
+        Tick(Name)
+        return
+
+
     if len(Profiles) <= 1:
         return
     Frame.destroy()
@@ -2009,8 +2125,9 @@ def CreateProfileBox(Name):
 
     DeleteBtn = tk.Button(
         TopRow,
-        text="Delete",
-        command=lambda: DeleteProfile(Name, Frame)
+        text="Delete Profile",
+        command=lambda: DeleteProfile(Name,DeleteBtn, Frame),
+        width=12
     )
     DeleteBtn.pack(side="right")
 
@@ -2061,7 +2178,8 @@ def CreateProfile():
 
     Profiles[Name] = {
         "Layout": CaptureLayout(),
-        "Warps": {}
+        "Warps": {},
+        "DeleteConfirmation": False,
     }
 
     CreateProfileBox(Name)
@@ -3254,7 +3372,7 @@ def IsOnlyModifiers(Keys):
 def CancelActiveCapture():
     ActiveCapture["Cancel"] = True
 
-def DetectKey(Button, Target, Field,Page=None, Timeout=6):
+def DetectKey(Button, Target, Field,Page=None, Timeout=4):
     global KeyBeingInput
 
     if KeyBeingInput:
@@ -3729,23 +3847,56 @@ def HandleMidiMessage(Device, msg):
 
             print("HandleMidiMessage Error:", E)
 
-def GetPorts():
+def GetPorts(CurrentRow=None):
     try:
         RawPorts = mido.get_input_names()
     except Exception:
-        return []
-    IgnoreKeywords = ("Virtual","LoopMIDI","Through","Midi Through","Monitor")
-    ValidPorts = []
+        RawPorts = []
+
+    IgnoreKeywords = (
+        "Virtual",
+        "LoopMIDI",
+        "Through",
+        "Midi Through",
+        "Monitor"
+    )
+
+    UsedPorts = set()
+
+    for Row in MidiRows:
+
+        if Row is CurrentRow:
+            continue
+
+        Device = Row.get("Device")
+
+        if Device and Device != "None":
+            UsedPorts.add(Device)
+
+    ValidPorts = ["None"]
 
     for Port in RawPorts:
+
         if any(K in Port for K in IgnoreKeywords):
             continue
+
+        if Port in UsedPorts:
+            continue
+
         if Port not in ValidPorts:
             ValidPorts.append(Port)
 
+    CurrentDevice = CurrentRow.get("Device")
+
+    if (
+        CurrentDevice
+        and CurrentDevice not in ValidPorts
+    ):
+        ValidPorts.append(CurrentDevice)
+
     return ValidPorts
 
-def DetectNote(Button, Device, Target, Field, Page=None, Timeout=6):
+def DetectNote(Button, Device, Target, Field, Page=None, Timeout=4):
     global MidiBeingInput
 
     if MidiBeingInput:
@@ -4181,6 +4332,15 @@ def CreateVirtualPort(Row):
         Row["VirtualPortName"] = None
         Row["VirtualPort"] = None
 
+def DestroyVirtualPort(Row):
+    try:
+        if Row.get("VirtualPort"):
+            Row["VirtualPort"].close()
+    except Exception as e:
+        print(f"DestroyVirtualPort Error: {e}")
+    Row["VirtualPort"] = None
+    Row["VirtualPortName"] = None
+
 def ResolveDrumChoke(Row, Note):
 
     for Drum in Row['DrumList']:
@@ -4254,11 +4414,12 @@ def SearchForAnyFile(Controller, var, Field):
 
 #This is probably what you're looking for vex.
 def AddMidiRow(Row=None, Loading=False):
-    global MidiRows
+    global MidiRows, DeleteDeviceConfirmation, DeleteDeviceRowConfirmation
     Frame = tk.Frame(MidiContainer, bd=2, relief="solid")
-    Frame.pack(fill="x", padx=5, pady=5)
+    Frame.pack(fill="x", expand=False, padx=5, pady=5)
     Frame.columnconfigure(0, weight=1)
     Frame.rowconfigure(0, weight=1)
+    
 
     if Row is None:
         Row = {}
@@ -4281,6 +4442,7 @@ def AddMidiRow(Row=None, Loading=False):
         Row['GhostNoteVolume'] = 10
         Row['SlamNoteVolume'] = 100
         Row['DynamicVolume'] = True
+        Row['DeleteConfirmation'] = False
 
     CreateVirtualPort(Row)
 
@@ -4298,13 +4460,13 @@ def AddMidiRow(Row=None, Loading=False):
     TogglesRowAlwaysFalseDrumVar = tk.BooleanVar(value=False)
     TogglesRowAlwaysFalseKeyboardVar = tk.BooleanVar(value=False)
 
-    ControllerToggle = tk.Checkbutton(TogglesRow, text="Controller", variable=TogglesRowAlwaysFalseControllerVar, command=lambda: HideToggleRowShowOtherRow("Controller"))
+    ControllerToggle = tk.Checkbutton(TogglesRow, text="Controller", variable=TogglesRowAlwaysFalseControllerVar, command=lambda: HideToggleRowShowOtherRow("Controller"),)
     ControllerToggle.grid(row=0, column=0, sticky="ew", padx=2)
     DrumsToggle = tk.Checkbutton(TogglesRow, text="Drums", variable=TogglesRowAlwaysFalseDrumVar, command=lambda: HideToggleRowShowOtherRow("Drums"))
     DrumsToggle.grid(row=0, column=1, sticky="ew", padx=2)
     KeyboardToggle = tk.Checkbutton(TogglesRow, text="Keyboard", variable=TogglesRowAlwaysFalseKeyboardVar, command=lambda: HideToggleRowShowOtherRow("Keyboard"))
     KeyboardToggle.grid(row=0, column=2, sticky="ew", padx=2)
-    ToggleRowDelete = tk.Button(TogglesRow, text="Delete Row", command=lambda:RemoveMidiRow(Frame, Row))
+    ToggleRowDelete = tk.Button(TogglesRow, text="Delete Device", command=lambda:RemoveMidiRow(Frame, Row,ToggleRowDelete))
     ToggleRowDelete.grid(row=0, column=4, sticky="ew", padx=2)
     #----------------------
     
@@ -4317,15 +4479,17 @@ def AddMidiRow(Row=None, Loading=False):
     BasicTopRow.columnconfigure(4, weight=0)
     BasicTopRow.columnconfigure(5, weight=0)
     BasicTopRow.columnconfigure(6, weight=0)
-    BasicTopRow.columnconfigure(7, weight=1)
-    BasicTopRow.columnconfigure(8, weight=1)
+    BasicTopRow.columnconfigure(7, weight=0)
+    BasicTopRow.columnconfigure(8, weight=0)
     BasicTopRow.columnconfigure(9, weight=0)
+    BasicTopRow.columnconfigure(10, weight=1)
+    BasicTopRow.columnconfigure(11, weight=0)
     BasicTopRow.rowconfigure(0, weight=0)
     
     ControllerRow = tk.Frame(Frame)
     ControllerRow.pack(fill="both", expand=True, padx=5, pady=5)
     ControllerRow.rowconfigure(0, weight=0)
-    ControllerRow.rowconfigure(1, weight=0, minsize=600)
+    ControllerRow.rowconfigure(1, weight=0)
     ControllerRow.columnconfigure(0, weight=0)
     ControllerRow.columnconfigure(1, weight=0)
     ControllerRow.columnconfigure(2, weight=0)
@@ -4341,7 +4505,7 @@ def AddMidiRow(Row=None, Loading=False):
     ControllerRow.pack_forget()
 
     DrumRow = tk.Frame(Frame)
-    DrumRow.pack(fill="both", expand=True, padx=5, pady=5)
+    DrumRow.pack(fill="x", expand=False, padx=5, pady=5)
     DrumRow.columnconfigure(0, weight=0)
     DrumRow.columnconfigure(1, weight=1)
     DrumRow.columnconfigure(2, weight=0)
@@ -4353,7 +4517,7 @@ def AddMidiRow(Row=None, Loading=False):
     DrumRow.columnconfigure(8, weight=0)
     DrumRow.rowconfigure(0,weight=1)
     DrumRow.rowconfigure(1,weight=0)
-    DrumRow.rowconfigure(2,weight=0, minsize=600)
+    DrumRow.rowconfigure(2,weight=0,)
     DrumRow.pack_forget()
 
     KeyboardRow = tk.Frame(Frame, bd=2, relief="solid")
@@ -4388,7 +4552,7 @@ def AddMidiRow(Row=None, Loading=False):
             else:
                 BasicTopRowCollapseButton.config(text="▼")
                 if Row["Drums"]:
-                    DrumRow.pack(fill="both", expand=True, padx=5, pady=5)
+                    DrumRow.pack(fill="x", expand=False, padx=5, pady=5)
                 elif Row["Controller"]:
                     ControllerRow.pack(fill="x", padx=5, pady=5)
                 elif Row["Keyboard"]:
@@ -4458,16 +4622,16 @@ def AddMidiRow(Row=None, Loading=False):
     BasicTopRowCollapseButton = tk.Button(BasicTopRow, text="▼", command=lambda:CollapseRow(Row, False), width = 2)
     BasicTopRowCollapseButton.grid(row=0, column=0, sticky="ew", padx=2)
 
-    #all3same
-    BasicTopRowControllerToggle = tk.Checkbutton(BasicTopRow,variable=TopRowAlwaysTrueControllerRowVar,text="Controller", command=lambda:HideBasictopRow())
+
+    BasicTopRowControllerToggle = tk.Checkbutton(BasicTopRow,variable=TopRowAlwaysTrueControllerRowVar,text="Controller", command=lambda:HideBasictopRow(), width = 12)
     BasicTopRowControllerToggle.grid(row=0, column=1, sticky="ew", padx=2)
     BasicTopRowControllerToggle.grid_remove()
 
-    BasicTopRowDrumToggle = tk.Checkbutton(BasicTopRow,variable=TopRowAlwaysTrueDrumRowVar,text="Drums", command=lambda:HideBasictopRow())
+    BasicTopRowDrumToggle = tk.Checkbutton(BasicTopRow,variable=TopRowAlwaysTrueDrumRowVar,text="Drums", command=lambda:HideBasictopRow(), width = 12)
     BasicTopRowDrumToggle.grid(row=0, column=1, sticky="ew", padx=2)
     BasicTopRowDrumToggle.grid_remove()
 
-    BasicTopRowKeyboardToggle = tk.Checkbutton(BasicTopRow,variable=TopRowAlwaysTrueKeyboardRowVar,text="Keyboard", command=lambda:HideBasictopRow())
+    BasicTopRowKeyboardToggle = tk.Checkbutton(BasicTopRow,variable=TopRowAlwaysTrueKeyboardRowVar,text="Keyboard", command=lambda:HideBasictopRow(), width = 12)
     BasicTopRowKeyboardToggle.grid(row=0, column=1, sticky="ew", padx=2)
     BasicTopRowKeyboardToggle.grid_remove()
     #---
@@ -4491,7 +4655,7 @@ def AddMidiRow(Row=None, Loading=False):
     BasicTopRowNameLabel = tk.Label(BasicTopRow, text="Name:")
     BasicTopRowNameLabel.grid(row=0, column=6, sticky="e", padx=2)
 
-    BasicTopRowRowName = tk.Entry(BasicTopRow, textvariable=RowName, width=30)
+    BasicTopRowRowName = tk.Entry(BasicTopRow, textvariable=RowName, width=20)
     BasicTopRowRowName.grid(row=0, column=7, sticky="ew", padx=2)
     RowName.trace_add("write", lambda *args: UpdateRowName(Row))
 
@@ -4499,17 +4663,28 @@ def AddMidiRow(Row=None, Loading=False):
         Row["Device"] = MidiDeviceVar.get()
         SaveConfig("NullMidi")
 
-    MidiDeviceVar = tk.StringVar(value=Row.get("Device", ""))
-    BasicTopRowMidiDeviceDropDown = ttk.Combobox(BasicTopRow, textvariable=MidiDeviceVar, state="readonly",values=GetPorts())
-    BasicTopRowMidiDeviceDropDown.grid(row=0, column=8, sticky="ew", padx=2)
-    BasicTopRowMidiDeviceDropDown.bind("<<ComboboxSelected>>",UpdateMidiDevice)
+    PortName = tk.StringVar(value=Row["VirtualPortName"])
 
-    BasicTopRowDelete = tk.Button(BasicTopRow, text="Delete Row", command=lambda:RemoveMidiRow(Frame, Row), width = 15)
-    BasicTopRowDelete.grid(row=0, column=9, sticky="ew", padx=2)
+    BasicTopRowVPText = tk.Label(BasicTopRow, text="Virtual\nPort Name:")
+    BasicTopRowVPText.grid(row=0, column=8, sticky="ew", padx=2)
+
+    BasicTopRowVPName = tk.Entry(BasicTopRow, textvariable=PortName, width=22, state="readonly")
+    BasicTopRowVPName.grid(row=0, column=9, sticky="ew", padx=2)
+
+    MidiDeviceVar = tk.StringVar(value=Row.get("Device", ""))
+    BasicTopRowMidiDeviceDropDown = ttk.Combobox(BasicTopRow, textvariable=MidiDeviceVar, state="readonly",values=GetPorts(Row))
+    BasicTopRowMidiDeviceDropDown.grid(row=0, column=10, sticky="ew", padx=2)
+    BasicTopRowMidiDeviceDropDown.bind("<<ComboboxSelected>>",UpdateMidiDevice)
+    BasicTopRowMidiDeviceDropDown.bind("<Button-1>",lambda e: BasicTopRowMidiDeviceDropDown.configure(values=GetPorts(Row)))
+
+    BasicTopRowDelete = tk.Button(BasicTopRow, text="Delete Device", command=lambda:RemoveMidiRow(Frame, Row,BasicTopRowDelete), width = 14)
+    BasicTopRowDelete.grid(row=0, column=11, sticky="ew", padx=2)
 
     BasicTopRow.pack_forget()
 
     def HideToggleRowShowOtherRow(Which):
+        Row["RowCollapsed"] = False
+        CollapseRow(Row,False)
         TogglesRow.pack_forget()
         ControllerRow.pack_forget()
         DrumRow.pack_forget()
@@ -4518,7 +4693,6 @@ def AddMidiRow(Row=None, Loading=False):
         Row['Controller'] = False
         Row['Drums'] = False
         Row['Keyboard'] = False
-        Row['Advanced'] = False
         TogglesRowAlwaysFalseControllerVar.set(False)
         TogglesRowAlwaysFalseDrumVar.set(False)
         TogglesRowAlwaysFalseKeyboardVar.set(False)
@@ -4528,15 +4702,12 @@ def AddMidiRow(Row=None, Loading=False):
 
         if Which == "Controller":
             Row['Controller'] = True
-            ControllerRow.pack(fill="x", padx=5, pady=5)
             BasicTopRowControllerToggle.grid()
         elif Which == "Drums":
             Row['Drums'] = True
-            DrumRow.pack(fill="both", expand=True, padx=5, pady=5)
             BasicTopRowDrumToggle.grid()
         elif Which == "Keyboard":
             Row['Keyboard'] = True
-            KeyboardRow.pack(fill="x", padx=5, pady=5)
             BasicTopRowKeyboardToggle.grid()
         SaveConfig("NullMidi")
     
@@ -4617,7 +4788,8 @@ def AddMidiRow(Row=None, Loading=False):
 
     # --------------- Controller
 
-    Controllerlist = ScrollableFrame(ControllerRow)
+    Controllerlist = tk.Frame(ControllerRow)
+    Controllerlist.pack(fill="both", expand="True", padx=5, pady=5)
     Controllerlist.grid(row=1, column=0, sticky="ewns", padx=2,columnspan=20)
     Controllerlist.columnconfigure(0,weight=1)
     Controllerlist.rowconfigure(0,weight=0)
@@ -4670,7 +4842,7 @@ def AddMidiRow(Row=None, Loading=False):
     
 
     def AddControllerToList(Controller=None, Loading=False):
-        ControllerFrame = tk.Frame(Controllerlist.Inner, bd=2, relief="solid")
+        ControllerFrame = tk.Frame(Controllerlist, bd=2, relief="solid")
         ControllerFrame.pack(fill="x", padx=5, pady=5)
         ControllerFrame.columnconfigure(0, weight=0)
         ControllerFrame.columnconfigure(1, weight=0)
@@ -4681,10 +4853,12 @@ def AddMidiRow(Row=None, Loading=False):
         ControllerFrame.columnconfigure(6, weight=2)
         ControllerFrame.columnconfigure(7, weight=0)
         ControllerFrame.columnconfigure(8, weight=0)
-        ControllerFrame.rowconfigure(0, weight=1)
+        ControllerFrame.rowconfigure(0, weight=0)
+        
 
         if Controller is None:
             Controller = {}
+            Controller['DeleteConfirmation'] = False
             Controller['MidiInputs'] = [None for i in range(1,101)]
             Controller['KeyOutputs'] = [[] for i in range(1,101)]
             Controller['KeyOrAction'] = [False for i in range(1,101)]
@@ -4759,7 +4933,31 @@ def AddMidiRow(Row=None, Loading=False):
                 
             SaveConfig("NullMidi")
             
-        def RemoveController(Controller):
+        def RemoveController(Controller, Button, Timeout=4):
+            EndTime = time.time() + (Timeout)
+
+            def Tick(Row):
+                if Controller['DeleteConfirmation'] == False:
+                    return
+                else:
+                    Remaining = int(EndTime - time.time())
+                    if Remaining <= 0:
+                        if not Button.winfo_exists():
+                            return
+                        Button.config(text="Delete Controller")
+                        Controller['DeleteConfirmation'] = False
+                        return
+                    if not Button.winfo_exists():
+                        return
+                    else:
+                        Button.config(text=f"R U Sure? {Remaining}")
+                        Root.after(1000, Tick, Row)
+
+            if Controller['DeleteConfirmation'] == False:
+                Controller['DeleteConfirmation'] = True
+                Tick(Row)
+                return
+
             Row["ControllerList"].remove(Controller)
             ControllerFrame.destroy()
             SaveConfig("NullMidi")
@@ -4837,8 +5035,11 @@ def AddMidiRow(Row=None, Loading=False):
 
         #--- Always
 
-        ControllerRemoveButton = tk.Button(ControllerFrame, command=lambda: RemoveController(Controller), text="Remove Controller", width=18)
+        ControllerRemoveButton = tk.Button(ControllerFrame, command=lambda: RemoveController(Controller,ControllerRemoveButton), text="Remove Controller", width=18)
         ControllerRemoveButton.grid(row=0, column=8)
+
+        MidiScrollBox.BindMouseWheel(Frame)
+
 
         if Loading:
             OnControllerPageChange()
@@ -4846,22 +5047,24 @@ def AddMidiRow(Row=None, Loading=False):
 
     # --------------- Drums
 
-    DrumList = ScrollableFrame(DrumRow)
+    DrumList = tk.Frame(DrumRow)#ScrollableFrame(DrumRow)
+    DrumList.pack(fill="both", expand="True", padx=5, pady=5)
 
     DrumList.grid(row=2, column=0, sticky="ewns", padx=2,columnspan=10)
     DrumList.columnconfigure(0,weight=1)
-    DrumList.rowconfigure(0,weight=1)
+    DrumList.rowconfigure(0,weight=0)
 
     #THEBIGPART
     def AddDrumToList(Drum=None, Loading=False):
-        MainDrumFrame = tk.Frame(DrumList.Inner, bd=2, relief="solid")
-        MainDrumFrame.pack(fill="both", expand=True, padx=5, pady=5)
+        MainDrumFrame = tk.Frame(DrumList, bd=2, relief="solid")
+        MainDrumFrame.pack(fill="x", padx=5, pady=5)
 
         MainDrumFrame.columnconfigure(0, weight=1)
         MainDrumFrame.rowconfigure(0, weight=1)
         
         if Drum is None:
             Drum = {}
+            Drum['DeleteConfirmation'] = False
             Drum['SpecificWindow'] = False
             Drum['WindowClassName'] = ""
             Drum['WindowDisplayName'] = ""
@@ -5019,7 +5222,30 @@ def AddMidiRow(Row=None, Loading=False):
         DrumRowAlwaysTrueHiHat = tk.BooleanVar(value=True)
         DrumRowAlwaysTruePad = tk.BooleanVar(value=True)
         
-        def RemoveDrum(Drum):
+        def RemoveDrum(Drum, Button, Timeout=4):
+            EndTime = time.time() + (Timeout)
+
+            def Tick(Row):
+                if Drum['DeleteConfirmation'] == False:
+                    return
+                else:
+                    Remaining = int(EndTime - time.time())
+                    if Remaining <= 0:
+                        if not Button.winfo_exists():
+                            return
+                        Button.config(text="Delete Drum")
+                        Drum['DeleteConfirmation'] = False
+                        return
+                    if not Button.winfo_exists():
+                        return
+                    else:
+                        Button.config(text=f"R U Sure? {Remaining}")
+                        Root.after(1000, Tick, Row)
+
+            if Drum['DeleteConfirmation'] == False:
+                Drum['DeleteConfirmation'] = True
+                Tick(Row)
+                return
             Row["DrumList"].remove(Drum)
             MainDrumFrame.destroy()
             SaveConfig("NullMidi")
@@ -5099,7 +5325,7 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowDrumName.grid(row=0, column=4, sticky="ew", padx=2)
                 DrumName.trace_add("write", lambda *args: UpdateDrumName(Drum))
 
-                RemoveDrumObjectFromList= tk.Button(DrumRowTopRow, text="Remove Pad?", command=lambda:RemoveDrum(Drum))
+                RemoveDrumObjectFromList= tk.Button(DrumRowTopRow, text="Delete Drum?", command=lambda:RemoveDrum(Drum, RemoveDrumObjectFromList))
                 RemoveDrumObjectFromList.grid(row=0, column=5, sticky="ew", padx=2)
 
                 PadsContainer = tk.Frame(DrumRowDrumRow, bd=2, relief="solid")
@@ -5292,6 +5518,8 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowRimSlamShowLabel = tk.Label(DrumRimSounds,textvariable=RimSlam)
                 DrumRowRimSlamShowLabel.grid(row=3, column=2, sticky="w")
 
+                MidiScrollBox.BindMouseWheel(Frame)
+
                 SetupSlider(DrumRowCenterVolumeSlider,CenterVolumeVar,0,100,UpdateCenterVolume)
 
                 SetupSlider(DrumRowCenterGhostSlider,CenterGhostNote,0,127,UpdateCenterGhost)
@@ -5362,7 +5590,7 @@ def AddMidiRow(Row=None, Loading=False):
                 CymbalRowCymbalName.grid(row=0, column=4, sticky="ew", padx=2)
                 CymbalName.trace_add("write", lambda *args: UpdateDrumName(Drum))
 
-                RemoveCymbalObjectFromList= tk.Button(CymbalRowTopRow, text="Remove Cymbal?", command=lambda:RemoveDrum(Drum))
+                RemoveCymbalObjectFromList= tk.Button(CymbalRowTopRow, text="Delete Drum", command=lambda:RemoveDrum(Drum, RemoveCymbalObjectFromList))
                 RemoveCymbalObjectFromList.grid(row=0, column=5, sticky="ew", padx=2)
 
                 CymbalsContainer = tk.Frame(DrumRowCymbalRow, bd=2, relief="solid")
@@ -5648,7 +5876,7 @@ def AddMidiRow(Row=None, Loading=False):
                 CymbalRowBowSlamShowLabel = tk.Label(CymbalRowBowSounds, textvariable=BowSlam)
                 CymbalRowBowSlamShowLabel.grid(row=3, column=2, sticky="w")
 
-
+                MidiScrollBox.BindMouseWheel(Frame)
 
                 SetupSlider(CymbalRowBellVolumeSlider, BellVolumeVar, 0, 100, UpdateBellVolume)
 
@@ -5656,16 +5884,11 @@ def AddMidiRow(Row=None, Loading=False):
 
                 SetupSlider(CymbalRowBellSlamSlider, BellSlam, 0, 127, UpdateBellSlam)
 
-
-
-
                 SetupSlider(CymbalRowEdgeVolumeSlider, EdgeVolumeVar, 0, 100, UpdateEdgeVolume)
 
                 SetupSlider(CymbalRowEdgeGhostSlider, EdgeGhostNote, 0, 127, UpdateEdgeGhost)
 
                 SetupSlider(CymbalRowEdgeSlamSlider, EdgeSlam, 0, 127, UpdateEdgeSlam)
-
-
 
                 SetupSlider(CymbalRowBowVolumeSlider, BowVolumeVar, 0, 100, UpdateBowVolume)
 
@@ -5718,7 +5941,7 @@ def AddMidiRow(Row=None, Loading=False):
                 Divider = tk.Frame(KickRowTopRow,width=2,bg="#555")
                 Divider.grid(row=0,column=2,sticky="ns",padx=5)
 
-                RemoveDrumObjectFromList= tk.Button(KickRowTopRow, text="Remove Pad?", command=lambda:RemoveDrum(Drum))
+                RemoveDrumObjectFromList= tk.Button(KickRowTopRow, text="Remove Drum", command=lambda:RemoveDrum(Drum, RemoveDrumObjectFromList))
                 RemoveDrumObjectFromList.grid(row=0, column=3, sticky="ew", padx=2)
 
                 KickContainer = tk.Frame(DrumRowKickRow, bd=2, relief="solid")
@@ -5804,6 +6027,7 @@ def AddMidiRow(Row=None, Loading=False):
                 DrumRowKickMinimumVelocityShowLabel = tk.Label(DrumRowKickSounds,textvariable=KickDrumMinimumVelocityVar)
                 DrumRowKickMinimumVelocityShowLabel.grid(row=2, column=2, sticky="w")
 
+                MidiScrollBox.BindMouseWheel(Frame)
 
                 SetupSlider(DrumRowKickVolumeSlider, CenterVolumeVar, 0, 100, UpdateKickVolume)
 
@@ -5870,7 +6094,7 @@ def AddMidiRow(Row=None, Loading=False):
                 Divider = tk.Frame(HihatRowTopRow, width=2, bg="#555")
                 Divider.grid(row=0, column=2, sticky="ns", padx=5)
 
-                RemoveHiHatObjectFromList = tk.Button(HihatRowTopRow, text="Remove HiHat?", command=lambda:RemoveDrum(Drum))
+                RemoveHiHatObjectFromList = tk.Button(HihatRowTopRow, text="Delete Drum", command=lambda:RemoveDrum(Drum, RemoveHiHatObjectFromList))
                 RemoveHiHatObjectFromList.grid(row=0, column=3, sticky="ew", padx=2)
 
 
@@ -5947,8 +6171,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowClosedThresholdShowLabel = tk.Label(HihatRowClosedSounds, textvariable=ClosedThresholdVar)
                 HihatRowClosedThresholdShowLabel.grid(row=2, column=2, sticky="w")
 
-                SetupSlider(HihatRowClosedVolumeSlider, ClosedVolumeVar, 0, 100, UpdateClosedVolume)
-                SetupSlider(HihatRowClosedThresholdSlider, ClosedThresholdVar, 0, 127, UpdateClosedThreshold)
+                
 
                 Divider = tk.Frame(HihatContainer, width=2, bg="#555")
                 Divider.grid(row=0, column=1, sticky="ns", padx=5)
@@ -6012,8 +6235,7 @@ def AddMidiRow(Row=None, Loading=False):
                     Drum["HiHatHalfVolume"] = HalfVolumeVar.get()
                     SaveConfig("NullMidi")
 
-                SetupSlider(HihatRowHalfVolumeSlider, HalfVolumeVar, 0, 100, UpdateHalfVolume)
-
+                
                 Divider = tk.Frame(HihatContainer, width=2, bg="#555")
                 Divider.grid(row=0, column=3, sticky="ns", padx=5)
 
@@ -6091,8 +6313,7 @@ def AddMidiRow(Row=None, Loading=False):
                 HihatRowOpenThresholdShowLabel = tk.Label(HihatRowOpenSounds, textvariable=OpenThresholdVar)
                 HihatRowOpenThresholdShowLabel.grid(row=2, column=2, sticky="w")
 
-                SetupSlider(HihatRowOpenVolumeSlider, OpenVolumeVar, 0, 100, UpdateOpenVolume)
-                SetupSlider(HihatRowOpenThresholdSlider, OpenThresholdVar, 0, 127, UpdateOpenThreshold)
+                
 
 
                 #------------ StompRow
@@ -6155,7 +6376,7 @@ def AddMidiRow(Row=None, Loading=False):
                     Drum["HiHatStompVolume"] = StompVolumeVar.get()
                     SaveConfig("NullMidi")
 
-                SetupSlider(HihatRowStompVolumeSlider, StompVolumeVar, 0, 100, UpdateStompVolume)
+                
 
                 HihatOpenFadeInVar = tk.IntVar(value=Drum.get("HiHatFadeIn", 60))
 
@@ -6172,7 +6393,7 @@ def AddMidiRow(Row=None, Loading=False):
                     Drum["HiHatFadeIn"] = HihatOpenFadeInVar.get()
                     SaveConfig("NullMidi")
 
-                SetupSlider(HihatRowOpenFadeInSlider, HihatOpenFadeInVar, 0, 500, UpdateFadeIn)
+                
 
                 HihatOpenTimeVar = tk.IntVar(value=Drum.get("HiHatOpenTime", 75))
 
@@ -6189,7 +6410,6 @@ def AddMidiRow(Row=None, Loading=False):
                     Drum["HiHatOpenTime"] = HihatOpenTimeVar.get()
                     SaveConfig("NullMidi")
 
-                SetupSlider(HihatRowOpenTimeSlider, HihatOpenTimeVar, 0, 500, UpdateHiHatOpenTime)
 
                 Divider = tk.Frame(HihatContainer, width=2, bg="#555")
                 Divider.grid(row=1, column=1, sticky="ns", padx=5)
@@ -6254,7 +6474,7 @@ def AddMidiRow(Row=None, Loading=False):
                     Drum["HiHatBellOpenVolume"] = BellOpenVolumeVar.get()
                     SaveConfig("NullMidi")
 
-                SetupSlider(HihatRowBellOpenVolumeSlider, BellOpenVolumeVar, 0, 100, UpdateBellOpenVolume)
+                
 
                 Divider = tk.Frame(HihatContainer, width=2, bg="#555")
                 Divider.grid(row=1, column=3, sticky="ns", padx=5)
@@ -6319,7 +6539,25 @@ def AddMidiRow(Row=None, Loading=False):
                     Drum["HiHatBellClosedVolume"] = BellClosedVolumeVar.get()
                     SaveConfig("NullMidi")
 
+                MidiScrollBox.BindMouseWheel(Frame)
+
                 SetupSlider(HihatRowBellClosedVolumeSlider, BellClosedVolumeVar, 0, 100, UpdateBellClosedVolume)
+
+                SetupSlider(HihatRowBellOpenVolumeSlider, BellOpenVolumeVar, 0, 100, UpdateBellOpenVolume)
+                
+                SetupSlider(HihatRowOpenTimeSlider, HihatOpenTimeVar, 0, 500, UpdateHiHatOpenTime)
+
+                SetupSlider(HihatRowOpenFadeInSlider, HihatOpenFadeInVar, 0, 500, UpdateFadeIn)
+
+                SetupSlider(HihatRowStompVolumeSlider, StompVolumeVar, 0, 100, UpdateStompVolume)
+
+                SetupSlider(HihatRowOpenVolumeSlider, OpenVolumeVar, 0, 100, UpdateOpenVolume)
+                SetupSlider(HihatRowOpenThresholdSlider, OpenThresholdVar, 0, 127, UpdateOpenThreshold)
+
+                SetupSlider(HihatRowHalfVolumeSlider, HalfVolumeVar, 0, 100, UpdateHalfVolume)
+
+                SetupSlider(HihatRowClosedVolumeSlider, ClosedVolumeVar, 0, 100, UpdateClosedVolume)
+                SetupSlider(HihatRowClosedThresholdSlider, ClosedThresholdVar, 0, 127, UpdateClosedThreshold)
 
                 CollapseHiHat(Drum, HihatContainer, Loading)
                 UpdateMuted()
@@ -6354,8 +6592,10 @@ def AddMidiRow(Row=None, Loading=False):
         DrumRowKickToggle.grid(row=0, column=2, sticky="ew", padx=2)
         DrumRowHihatToggle = tk.Checkbutton(MainDrumRowToggles, text="Hihat?", variable=DrumRowAlwaysFalseHihat, command=lambda: SwitchDrumType("Hihat"))
         DrumRowHihatToggle.grid(row=0, column=3, sticky="ew", padx=2)
-        RemoveDrumObjectFromListMainDrum = tk.Button(MainDrumRowToggles, text="Remove Drum", command=lambda:RemoveDrum(Drum))
+        RemoveDrumObjectFromListMainDrum = tk.Button(MainDrumRowToggles, text="Delete Drum", command=lambda:RemoveDrum(Drum, RemoveDrumObjectFromListMainDrum))
         RemoveDrumObjectFromListMainDrum.grid(row=0, column=4, sticky="ew", padx=2)
+
+        MidiScrollBox.BindMouseWheel(Frame)
 
         if Loading:
             DrumWindowSpecificUpdater(True)
@@ -6408,15 +6648,13 @@ def AddMidiRow(Row=None, Loading=False):
     AddDrumObjectToList = tk.Button(DrumRow, text="Add Drum", command=lambda:AddDrumToList())
     AddDrumObjectToList.grid(row=1, column=0, sticky="ew", padx=2, columnspan=2)
 
-    
-
-    
+    MidiScrollBox.BindMouseWheel(Frame)
 
     SetupSlider(DrumGhostVolumeSlider,DrumGhostNoteVolume,1,25,UpdateGhostVolume)
     SetupSlider(DrumSlamVolumeSlider,DrumSlamNoteVolume,76,100,UpdateSlamVolume)
     
 
-
+    
     MidiRows.append(Row)
 
     if not Loading:
@@ -6435,11 +6673,38 @@ def AddMidiRow(Row=None, Loading=False):
 
         CollapseRow(Row, True)
 
+def RemoveMidiRow(Frame, Row, Button, Timeout=4):
+    EndTime = time.time() + (Timeout)
 
-def RemoveMidiRow(Frame, Row):
+    def Tick(Row):
+        if Row['DeleteConfirmation'] == False:
+            return
+        else:
+            Remaining = int(EndTime - time.time())
+
+            if Remaining <= 0:
+                if not Button.winfo_exists():
+                    return
+                Button.config(text="Delete Device")
+                Row['DeleteConfirmation'] = False
+                return
+            if not Button.winfo_exists():
+                return
+            else:
+                Button.config(text=f"R U Sure? {Remaining}")
+                Root.after(1000, Tick, Row)
+        
+    if Row['DeleteConfirmation'] == False:
+        Row['DeleteConfirmation'] = True
+        Tick(Row)
+        return 
+    
+        
+    DestroyVirtualPort(Row)
     Frame.destroy()
     MidiRows.remove(Row)
     SaveConfig("NullMidi")
+    return
 
 # ————————————————————————————————————————————————————————————
 # NullGit
@@ -7742,7 +8007,8 @@ def AddRepoObject(Repo):
         ttk.Separator(Frame, orient="horizontal").grid(row=3, column=0, sticky="ew", columnspan=3, pady=6)
         tk.Button(Frame, text="Push Repo", width=10, command=lambda: PushGit(Repo, CommitMessage, StatusVar)).grid(row=2, column=2, padx=5)
     else:
-        tk.Button(Frame, text="Delete Repo From NullGit", command=lambda: DeleteRepoInNull(Repo)).grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
+        DeleteButton = tk.Button(Frame, text="Delete Repo From NullGit", command=lambda: DeleteRepoInNull(Repo, DeleteButton))
+        DeleteButton.grid(row=6, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
     threading.Thread(target=UpdateRepoStatus,args=(Repo, StatusVar),daemon=True).start()
     RepoBoxes.append(Frame)
@@ -7847,8 +8113,32 @@ def OpenRepo(Repo, LocalOrNet=True):
             str(e)
         )
 
-def DeleteRepoInNull(Repo):
-    
+def DeleteRepoInNull(Repo, Button, Timeout=4):
+    EndTime = time.time() + (Timeout)
+
+    def Tick(Repo):
+        if Repo == None:
+            return
+        else:
+            Remaining = int(EndTime - time.time())
+            if Remaining <= 0:
+                if not Button.winfo_exists():
+                    return
+                Button.config(text="Delete Repo From NullGit")
+                Repo['DeleteConfirmation'] = False
+                return
+            if not Button.winfo_exists():
+                return
+            else:
+                Button.config(text=f"R U Sure? {Remaining}")
+                Root.after(1000, Tick, Repo)
+
+    if Repo['DeleteConfirmation'] == False:
+        Repo['DeleteConfirmation'] = True
+        Tick(Repo)
+        return
+
+
     Path = Repo["Path"]
 
     Confirm = messagebox.askyesno(
@@ -8987,7 +9277,8 @@ NuclearFrame.columnconfigure(1, weight=1)
 NuclearFrame.rowconfigure(0, weight=0)
 NuclearFrame.rowconfigure(1, weight=0)
 NuclearFrame.rowconfigure(2, weight=1)
-tk.Button(RepoFrame, text="Delete Repo From NullGit", command=lambda:DeleteRepoInNull(CurrentManagedRepo)).grid(row=0, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
+DeleteNullGitRepoButton = tk.Button(RepoFrame, text="Delete Repo From NullGit", command=lambda:DeleteRepoInNull(CurrentManagedRepo, DeleteNullGitRepoButton))
+DeleteNullGitRepoButton.grid(row=0, column=0, sticky="ew", padx=5, pady=2, columnspan=3)
 
 
 tk.Button(BranchFrame, text="Create Branch", width= 11, command=lambda:CreateBranchOnGit()).grid(row=0, column=0, sticky="ew", padx=5, pady=2)
