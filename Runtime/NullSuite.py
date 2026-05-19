@@ -110,6 +110,8 @@ CurrentProcess = None
 # ------------------------------
 # NullMidi
 # ------------------------------
+KeyBeingInput = False
+MidiBeingInput = False
 MidiRows = []
 SaveRows = []
 MidiDeviceListeners = {}
@@ -603,8 +605,6 @@ class ScrollableFrame(tk.Frame):
 
         scrollbar.pack(side="right", fill="y")
 
-        self.BindMouseWheel(self)
-        self.BindMouseWheel(self.Canvas)
         self.BindMouseWheel(self.Inner)
 
     def BindMouseWheel(self, widget):
@@ -3254,63 +3254,78 @@ def IsOnlyModifiers(Keys):
 def CancelActiveCapture():
     ActiveCapture["Cancel"] = True
 
-def DetectKey(Button, Target, Field, Timeout=5):
+def DetectKey(Button, Target, Field,Page=None, Timeout=6):
+    global KeyBeingInput
+
+    if KeyBeingInput:
+        return
 
     CancelActiveCapture()
+    time.sleep(0.05)
     ActiveCapture["Cancel"] = False
 
     Button.config(text=f"Waiting... {Timeout}\n Hold ESC to clear")
 
     HeldKeys = set()
 
-    LastInputTime = [0]
+    EndTime = time.time() + (Timeout - 1)
 
     EscapeHeld = [False]
 
-    EndTime = time.time() + Timeout
-
     def Cleanup():
-
+        global KeyBeingInput
+        KeyBeingInput= False
         Root.unbind("<KeyPress>")
         Root.unbind("<KeyRelease>")
-
-
+    
     def ClearBinding():
-
         if not EscapeHeld[0]:
             return
-
-        Target[Field] = []
-
+        if Page == None:
+            Target[Field] = []
+            
+        else:
+            Target[Field][Page] = []
         Button.config(text="Set Key")
-
         BuildGlobalUInputDevice()
         SaveConfig("NullMidi")
         Cleanup()
 
-
     def OnPress(Event):
+        def IsModifierKey(Key):
+            Key = Key.upper()
 
+            return (
+                "SHIFT" in Key
+                or "CTRL" in Key
+                or "ALT" in Key
+                or "SUPER" in Key
+            )
+        
         if ActiveCapture["Cancel"]:
             Cleanup()
             return
 
         Key = NormalizeKey(Event.keysym)
-
         if Key == "ESCAPE":
-
             if not EscapeHeld[0]:
-
                 EscapeHeld[0] = True
-
                 Root.after(1000, ClearBinding)
-
             return
+        
+        if not IsModifierKey(Key):
+            NonModifiers = {
+                K for K in HeldKeys
+                if not IsModifierKey(K)
+            }
+
+            for K in NonModifiers:
+                HeldKeys.discard(K)
+
+            for K in NonModifiers:
+                HeldKeys.discard(K)
 
         HeldKeys.add(Key)
-
-        LastInputTime[0] = time.time()
-
         Button.config(
             text="+".join(
                 FormatKeyName(K)
@@ -3319,16 +3334,11 @@ def DetectKey(Button, Target, Field, Timeout=5):
         )
 
     def OnRelease(Event):
-
         Key = NormalizeKey(Event.keysym)
-
         if Key == "ESCAPE":
-
             EscapeHeld[0] = False
 
-
     def Tick():
-
         if ActiveCapture["Cancel"]:
             Cleanup()
             return
@@ -3357,14 +3367,24 @@ def DetectKey(Button, Target, Field, Timeout=5):
 
             if Remaining <= 0:
 
-                Target[Field] = SortKeys(HeldKeys)
+                if Page == None:
+                    Target[Field] = SortKeys(HeldKeys)
 
-                Button.config(
-                    text="+".join(
-                        FormatKeyName(K)
-                        for K in Target[Field]
+                    Button.config(
+                        text="+".join(
+                            FormatKeyName(K)
+                            for K in Target[Field]
+                        )
                     )
-                )
+                else:
+                    Target[Field][Page] = SortKeys(HeldKeys)
+
+                    Button.config(
+                        text="+".join(
+                            FormatKeyName(K)
+                            for K in Target[Field][Page]
+                        )
+                    )
 
                 BuildGlobalUInputDevice()
 
@@ -3375,23 +3395,36 @@ def DetectKey(Button, Target, Field, Timeout=5):
                 return
 
             Button.config(
-                text=f"{FormatKeyName(list(HeldKeys)[0])}... {Remaining}"
+                text=f"{Remaining}"
             )
 
             Root.after(1000, Tick)
 
             return
 
-        if time.time() - LastInputTime[0] > 0.5:
+        Remaining = int(EndTime - time.time())
 
-            Target[Field] = SortKeys(HeldKeys)
+        if Remaining > 0:
+            
+            if Page == None:
+                Target[Field] = SortKeys(HeldKeys)
 
-            Button.config(
-                text="+".join(
-                    FormatKeyName(K)
-                    for K in Target[Field]
+                Button.config(
+                    text="+".join(
+                        FormatKeyName(K)
+                        for K in Target[Field]
+                    )
                 )
-            )
+            else:
+                Target[Field][Page] = SortKeys(HeldKeys)
+
+                Button.config(
+                    text="+".join(
+                        FormatKeyName(K)
+                        for K in Target[Field][Page]
+                    )
+                )
+
 
             BuildGlobalUInputDevice()
 
@@ -3401,12 +3434,12 @@ def DetectKey(Button, Target, Field, Timeout=5):
 
             return
 
-        Root.after(100, Tick)
+        Root.after(25, Tick)
 
     Root.bind("<KeyPress>", OnPress)
 
     Root.bind("<KeyRelease>", OnRelease)
-
+    KeyBeingInput = True
     Tick()
 
 
@@ -3712,22 +3745,41 @@ def GetPorts():
 
     return ValidPorts
 
-def DetectNote(Button, Device, Target, Field, Timeout=5):
+def DetectNote(Button, Device, Target, Field, Page=None, Timeout=6):
+    global MidiBeingInput
+
+    if MidiBeingInput:
+        return
+
     CancelActiveCapture()
     ActiveCapture["Cancel"] = False
-    Button.config(text=f"Waiting... {Timeout}\n Hold ESC to clear")
+    Button.config(text=f"Hold ESC to clear {Timeout-1}")
     EscapeHeld = [False]
+    EndTime = time.time() + (Timeout - 1)
 
+    try:
+        Port = mido.open_input(Device)
+    except:
+        Button.config(text="Error")
+        return
 
     def Cleanup():
+        global MidiBeingInput
+        try:
+            Port.close()
+        except:
+            pass
+        MidiBeingInput = False
         Root.unbind("<KeyPress>")
         Root.unbind("<KeyRelease>")
 
     def ClearBinding():
         if not EscapeHeld[0]:
             return
-
-        Target[Field] = None
+        if Page is None:
+            Target[Field] = None
+        else:
+            Target[Field][Page] = None
         Button.config(text="Set Midi")
         SaveConfig("NullMidi")
         Cleanup()
@@ -3739,38 +3791,55 @@ def DetectNote(Button, Device, Target, Field, Timeout=5):
                 EscapeHeld[0] = True
                 Root.after(1000, ClearBinding)
 
-
     def OnRelease(Event):
         Key = NormalizeKey(Event.keysym)
         if Key == "ESCAPE":
             EscapeHeld[0] = False
 
-    def Worker():
-        EndTime = time.time() + Timeout
-        try:
-            with mido.open_input(Device) as Port:
-                while time.time() < EndTime:
-                    if ActiveCapture["Cancel"]:
-                        Cleanup()
-                        return
-                    for Msg in Port.iter_pending():
-                        if Msg.type == "note_on":
-                            Target[Field] = Msg.note
-                            Button.config(text=str(Msg.note))
-                            SaveConfig("NullMidi")
-                            Cleanup()
-                            return
-                    time.sleep(0.01)
+    def Tick():
+        if ActiveCapture["Cancel"]:
+            Cleanup()
+            return
+        Remaining = int(EndTime - time.time())
+        if Remaining <= 0:
             Button.config(text="Set Midi")
             Cleanup()
+            return
+        Button.config(text=f"Hold ESC to clear - {Remaining}")
 
-        except:
-            Button.config(text="Error")
-            Cleanup()
-
+        for Msg in Port.iter_pending():
+            if Msg.type == "note_on":
+                if Page is None:
+                    Target[Field] = Msg.note
+                else:
+                    Target[Field][Page] = Msg.note
+                Button.config(text=f"Note: {Msg.note}")
+                SaveConfig("NullMidi")
+                Cleanup()
+                return
+            elif Msg.type == "control_change":
+                if Page is None:
+                    Target[Field] = Msg.control
+                else:
+                    Target[Field][Page] = Msg.control
+                Button.config(text=f"Control: {Msg.control}")
+                SaveConfig("NullMidi")
+                Cleanup()
+                return
+            elif Msg.type == "polytouch":
+                if Page is None:
+                    Target[Field] = Msg.note
+                else:
+                    Target[Field][Page] = Msg.note
+                Button.config(text=f"Poly: {Msg.note}")
+                SaveConfig("NullMidi")
+                Cleanup()
+                return
+        Root.after(3, Tick)
     Root.bind("<KeyPress>", OnPress)
     Root.bind("<KeyRelease>", OnRelease)
-    threading.Thread(target=Worker, daemon=True).start()
+    MidiBeingInput = True
+    Tick()
 
 def ResolveDrumHit(Row, Note):
 
@@ -4187,7 +4256,7 @@ def SearchForAnyFile(Controller, var, Field):
 def AddMidiRow(Row=None, Loading=False):
     global MidiRows
     Frame = tk.Frame(MidiContainer, bd=2, relief="solid")
-    Frame.pack(fill="both", expand=True, padx=5, pady=5)
+    Frame.pack(fill="x", padx=5, pady=5)
     Frame.columnconfigure(0, weight=1)
     Frame.rowconfigure(0, weight=1)
 
@@ -4197,6 +4266,9 @@ def AddMidiRow(Row=None, Loading=False):
         Row['Device'] = None
         Row['SendKeys'] = True
         Row['Controller'] = False
+        Row['ControllerPage'] = 1
+        Row['PageUpMidi'] = None
+        Row['PageDownMidi'] = None
         Row['Drums'] = False
         Row['Keyboard'] = False
         Row['Active'] = True
@@ -4253,8 +4325,19 @@ def AddMidiRow(Row=None, Loading=False):
     ControllerRow = tk.Frame(Frame)
     ControllerRow.pack(fill="both", expand=True, padx=5, pady=5)
     ControllerRow.rowconfigure(0, weight=0)
-    ControllerRow.rowconfigure(1, weight=1, minsize=600)
-    ControllerRow.columnconfigure(0, weight=1)
+    ControllerRow.rowconfigure(1, weight=0, minsize=600)
+    ControllerRow.columnconfigure(0, weight=0)
+    ControllerRow.columnconfigure(1, weight=0)
+    ControllerRow.columnconfigure(2, weight=0)
+    ControllerRow.columnconfigure(3, weight=0)
+    ControllerRow.columnconfigure(4, weight=0)
+    ControllerRow.columnconfigure(5, weight=0)
+    ControllerRow.columnconfigure(6, weight=0)
+    ControllerRow.columnconfigure(7, weight=0)
+    ControllerRow.columnconfigure(8, weight=0)
+    ControllerRow.columnconfigure(9, weight=0)
+    ControllerRow.columnconfigure(10, weight=0)
+    ControllerRow.columnconfigure(11, weight=1)
     ControllerRow.pack_forget()
 
     DrumRow = tk.Frame(Frame)
@@ -4270,7 +4353,7 @@ def AddMidiRow(Row=None, Loading=False):
     DrumRow.columnconfigure(8, weight=0)
     DrumRow.rowconfigure(0,weight=1)
     DrumRow.rowconfigure(1,weight=0)
-    DrumRow.rowconfigure(2,weight=1, minsize=600)
+    DrumRow.rowconfigure(2,weight=0, minsize=600)
     DrumRow.pack_forget()
 
     KeyboardRow = tk.Frame(Frame, bd=2, relief="solid")
@@ -4327,6 +4410,7 @@ def AddMidiRow(Row=None, Loading=False):
             KeyboardRow.pack_forget()
             BasicTopRowCollapseButton.config(text="▶")
             Row["RowCollapsed"] = True
+        SaveConfig("NullMidi")
             
     def HideBasictopRow():
         TogglesRowAlwaysFalseControllerVar.set(False)
@@ -4534,120 +4618,146 @@ def AddMidiRow(Row=None, Loading=False):
     # --------------- Controller
 
     Controllerlist = ScrollableFrame(ControllerRow)
-    Controllerlist.grid(row=1, column=0, sticky="ewns", padx=2,columnspan=1)
+    Controllerlist.grid(row=1, column=0, sticky="ewns", padx=2,columnspan=20)
     Controllerlist.columnconfigure(0,weight=1)
-    Controllerlist.rowconfigure(0,weight=1)
+    Controllerlist.rowconfigure(0,weight=0)
+    ControllerRowPage = tk.IntVar(value=Row.get("ControllerPage",False))
+
+    tk.Label(ControllerRow, text="Page:").grid(row=0, column=1, sticky="ew", padx=(5,1))
+    ControllerShowPage = tk.Entry(ControllerRow, textvariable=ControllerRowPage, state="readonly", width=3)
+    ControllerShowPage.grid(row=0, column=2, sticky="ew", padx=(5,1))
+
+    def ControllerPageHandler(Which):
+        if Which=="Up":
+            if Row['ControllerPage'] == 99:
+                return
+            else:
+                Row['ControllerPage'] += 1
+
+        elif Which == "Down":
+            if Row['ControllerPage'] == 1:
+                return
+            else:
+                Row['ControllerPage'] -= 1
+        ControllerRowPage.set(value=Row['ControllerPage'])
+        SaveConfig("NullMidi")
+
+    ControllerPageDown = tk.Button(ControllerRow, command=lambda: ControllerPageHandler("Down"), text="Page Down", width=8)
+    ControllerPageDown.grid(row=0, column=3)
+
+    ControllerPageUp = tk.Button(ControllerRow, command=lambda: ControllerPageHandler("Up"), text="Page Up", width=8)
+    ControllerPageUp.grid(row=0, column=4)
+
+    Divider = tk.Frame(ControllerRow,width=2,bg="#555")
+    Divider.grid(row=0,column=5,sticky="news",padx=5)
+
+    tk.Label(ControllerRow, text="Page Down Midi").grid(row=0, column=6, sticky="e", padx=(5,0))
+
+    ControllerMidiPageUp = tk.Button(ControllerRow,text=("Set Midi"if Row.get("PageUpMidi") is None else str(Row.get("PageUpMidi"))),command=lambda: DetectNote(ControllerMidiPageUp,Row["Device"],Row, "PageUpMidi"), width =15)
+    ControllerMidiPageUp.grid(row=0, column=7)
+
+    ControllerMidiPageDown = tk.Button(ControllerRow,text=("Set Midi"if Row.get("PageDownMidi") is None else str(Row.get("PageDownMidi"))),command=lambda: DetectNote(ControllerMidiPageDown,Row["Device"],Row, "PageDownMidi"), width =15)
+    ControllerMidiPageDown.grid(row=0, column=8)
+
+    tk.Label(ControllerRow, text="Page Up Midi").grid(row=0, column=9, sticky="w", padx=(0,5))
+
+    Divider = tk.Frame(ControllerRow,width=2,bg="#555")
+    Divider.grid(row=0,column=10,sticky="news",padx=5)
 
     AddControllerObjectToList = tk.Button(ControllerRow, text="Add Controller", command=lambda:AddControllerToList(None,False))
-    AddControllerObjectToList.grid(row=0, column=0, sticky="ew", padx=2, columnspan=9)
+    AddControllerObjectToList.grid(row=0, column=11, sticky="ew", padx=2)
+
+    
 
     def AddControllerToList(Controller=None, Loading=False):
         ControllerFrame = tk.Frame(Controllerlist.Inner, bd=2, relief="solid")
-        ControllerFrame.pack(fill="both", expand=True, padx=5, pady=5)
+        ControllerFrame.pack(fill="x", padx=5, pady=5)
         ControllerFrame.columnconfigure(0, weight=0)
         ControllerFrame.columnconfigure(1, weight=0)
         ControllerFrame.columnconfigure(2, weight=0)
         ControllerFrame.columnconfigure(3, weight=0)
-        ControllerFrame.columnconfigure(4, weight=2)
+        ControllerFrame.columnconfigure(4, weight=0)
         ControllerFrame.columnconfigure(5, weight=0)
-        ControllerFrame.columnconfigure(6, weight=0)
+        ControllerFrame.columnconfigure(6, weight=2)
+        ControllerFrame.columnconfigure(7, weight=0)
+        ControllerFrame.columnconfigure(8, weight=0)
         ControllerFrame.rowconfigure(0, weight=1)
 
         if Controller is None:
             Controller = {}
-            Controller['MidiInput'] = None
-            Controller['KeyOutput'] = []
-            Controller['KeyOrAction'] = False
-            Controller['WindowSpecific'] = False
-            Controller['WindowClassName'] = ""
-            Controller['WindowDisplayName'] = ""
-            Controller['StartFilePath'] = ""
-            Controller['CustomCommand'] = ""
-            Controller['FileOrCustom'] = False
+            Controller['MidiInputs'] = [None for i in range(1,101)]
+            Controller['KeyOutputs'] = [[] for i in range(1,101)]
+            Controller['KeyOrAction'] = [False for i in range(1,101)]
+            Controller['WindowSpecific'] = [False for i in range(1,101)]
+            Controller['WindowClassName'] = ["" for i in range(1,101)]
+            Controller['WindowDisplayName'] = ["" for i in range(1,101)]
+            Controller['StartFilePath'] = ["" for i in range(1,101)]
+            Controller['CustomCommand'] = ["" for i in range(1,101)]
+            Controller['FileOrCustom'] = [False for i in range(1,101)]
             Row['ControllerList'].append(Controller)
             SaveConfig("NullMidi")
 
+        ControllerPage = tk.StringVar(value="1")
+        Page = int(ControllerPage.get())
+        pages = []
+        for i in range(1,100):
+            pages.append(i)
+        KeyOrAction = tk.BooleanVar(value=Controller["KeyOrAction"][Page-1])
+        WindowSpecific = tk.BooleanVar(value=Controller["WindowSpecific"][Page-1])
+        WindowDisplayName = tk.StringVar(value=Controller["WindowDisplayName"][Page-1])
+        StartFilePath = tk.StringVar(value=Controller["StartFilePath"][Page-1])
+        CustomCommand = tk.StringVar(value=Controller["CustomCommand"][Page-1])
+        FileOrCustom = tk.BooleanVar(value=Controller["FileOrCustom"][Page-1])
 
-        KeyOrAction = tk.BooleanVar(value=Controller.get("KeyOrAction",False))
-        WindowSpecific = tk.BooleanVar(value=Controller.get("WindowSpecific",False))
-        WindowDisplayName = tk.StringVar(value= Controller.get("WindowDisplayName", ""))
-        StartFilePath = tk.StringVar(value= Controller.get("StartFilePath", ""))
-        CustomCommand = tk.StringVar(value= Controller.get("CustomCommand", ""))
-        FileOrCustom = tk.BooleanVar(value=Controller.get("FileOrCustom",False))
+        def ControllerUIUpdater():
+            Controller['KeyOrAction'][Page-1] = KeyOrAction.get()
+            Controller['WindowSpecific'][Page-1]= WindowSpecific.get()
+            Controller['FileOrCustom'][Page-1]= FileOrCustom.get()
 
-        
+            UsingActionOutput = KeyOrAction.get()
+            UsingKeyOutput = not KeyOrAction.get()
 
-        def KeyOrActionUpdater():
-            Controller['KeyOrAction'] = KeyOrAction.get()
+            UsingFileForOutput = not Controller['FileOrCustom'][Page-1]
+            UsingCustomOutput = Controller['FileOrCustom'][Page-1]
 
-            if Controller['KeyOrAction']:
+            SendToOneWindow = Controller['WindowSpecific'][Page-1]
+            SendToAllWindows = not Controller['WindowSpecific'][Page-1]
+
+            if UsingActionOutput:
                 ControllerKeyOutputButton.grid_forget()
                 ControllerWindowSpecificSwitcher.grid_forget()
                 ControllerWindowSpecifiWindowShow.grid_forget()
                 ControllerWindowSpecificChooseWindowButton.grid_forget()
-
-                ControllerFileSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
-
-                if Controller['FileOrCustom']:
-                    ControllerCustomEntryShow.grid(row=0, column=4, sticky="ew")
+                ControllerFileSwitcher.grid_forget()
+                ControllerFileSwitcher.grid(row=0, column=4, sticky="ew", padx=2)
+                if UsingCustomOutput:
+                    ControllerCustomEntryShow.grid(row=0, column=6, sticky="ew")
                     ControllerCustomRunButton.grid(row=0, column=5)
                     ControllerActionEntryShow.grid_forget()
                     ControllerChooseFile.grid_forget()
-                else:
-                    ControllerActionEntryShow.grid(row=0, column=4, sticky="ew")
+                elif UsingFileForOutput:
+                    ControllerActionEntryShow.grid(row=0, column=6, sticky="ew")
                     ControllerChooseFile.grid(row=0, column=5)
                     ControllerCustomEntryShow.grid_forget()
                     ControllerCustomRunButton.grid_forget()
-            else:
-                ControllerKeyOutputButton.grid(row=0, column=2, sticky="ew")
-                ControllerWindowSpecificSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
-                if Controller['WindowSpecific']:
-                    ControllerWindowSpecifiWindowShow.grid(row=0, column=4, sticky="ew")
-                    ControllerWindowSpecificChooseWindowButton.grid(row=0, column=5)
-                else:
-                    ControllerWindowSpecifiWindowShow.grid_forget()
-                    ControllerWindowSpecificChooseWindowButton.grid_forget()
-
+            elif UsingKeyOutput:
                 ControllerFileSwitcher.grid_forget()
                 ControllerCustomEntryShow.grid_forget()
                 ControllerCustomRunButton.grid_forget()
                 ControllerActionEntryShow.grid_forget()
                 ControllerChooseFile.grid_forget()
 
-                
-                
-
-            SaveConfig("NullMidi")
-
-        def WindowSpecificUpdater():
-            Controller['WindowSpecific'] = WindowSpecific.get()
-
-            if Controller['WindowSpecific']:
-                ControllerWindowSpecifiWindowShow.grid(row=0, column=4, sticky="ew")
-                ControllerWindowSpecificChooseWindowButton.grid(row=0, column=5)
-            else:
-                ControllerWindowSpecifiWindowShow.grid_forget()
-                ControllerWindowSpecificChooseWindowButton.grid_forget()
-            SaveConfig("NullMidi")
-            return
-            
-        def FileOrCustomUpdater():
-            Controller['FileOrCustom'] = FileOrCustom.get()
-
-            if Controller['FileOrCustom']:
-                ControllerCustomEntryShow.grid(row=0, column=4, sticky="ew")
-                ControllerCustomRunButton.grid(row=0, column=5)
-                ControllerActionEntryShow.grid_forget()
-                ControllerChooseFile.grid_forget()
-            else:
-                ControllerActionEntryShow.grid(row=0, column=4, sticky="ew")
-                ControllerChooseFile.grid(row=0, column=5)
-                ControllerCustomEntryShow.grid_forget()
-                ControllerCustomRunButton.grid_forget()
+                ControllerKeyOutputButton.grid(row=0, column=4, sticky="ew")
+                ControllerWindowSpecificSwitcher.grid(row=0, column=5, sticky="ew", padx=2)
+                if SendToOneWindow:
+                    ControllerWindowSpecifiWindowShow.grid(row=0, column=6, sticky="ew")
+                    ControllerWindowSpecificChooseWindowButton.grid(row=0, column=7)
+                elif SendToAllWindows:
+                    ControllerWindowSpecifiWindowShow.grid_forget()
+                    ControllerWindowSpecificChooseWindowButton.grid_forget()
 
                 
             SaveConfig("NullMidi")
-            return
             
         def RemoveController(Controller):
             Row["ControllerList"].remove(Controller)
@@ -4655,62 +4765,83 @@ def AddMidiRow(Row=None, Loading=False):
             SaveConfig("NullMidi")
 
         def UpdateCustomCommand(*args):
-            Controller['CustomCommand'] = CustomCommand.get()
+            Controller['CustomCommand'][Page-1] = CustomCommand.get()
             SaveConfig("NullMidi")
 
-        
+        def OnControllerPageChange():
+            Page = int(ControllerPage.get())
+            KeyOrAction.set(Controller['KeyOrAction'][Page-1])
+            WindowSpecific.set(Controller['WindowSpecific'][Page-1])
+            WindowDisplayName.set(Controller['WindowDisplayName'][Page-1])
+            StartFilePath.set(Controller['StartFilePath'][Page-1])
+            CustomCommand.set(Controller['CustomCommand'][Page-1])
+            FileOrCustom.set(Controller['FileOrCustom'][Page-1])
+            ControllerUIUpdater()
+            return
 
-        ControllerKeyActionSwitcher = tk.Checkbutton(ControllerFrame, text="Keys|Action", variable=KeyOrAction, command=lambda:KeyOrActionUpdater())
-        ControllerKeyActionSwitcher.grid(row=0, column=0, sticky="ew", padx=2)
+        #--- absolutes
+        ControllerPageDropDown = ttk.Combobox(ControllerFrame, values=pages, textvariable=ControllerPage, state="readonly", width=3)
+        ControllerPageDropDown.grid(row=0, column=0, sticky="ew", padx=(5,1))
+        ControllerPageDropDown.bind("<<ComboboxSelected>>",lambda e: OnControllerPageChange())
 
-        ControllerMidiInputButton = tk.Button(ControllerFrame,text=("Set Midi"if Controller.get("MidiInput") is None else str(Controller.get("MidiInput"))),command=lambda: DetectNote(ControllerMidiInputButton,Row["Device"],Controller, "MidiInput"), width =22)
-        ControllerMidiInputButton.grid(row=0, column=1)
+        ControllerKeyActionSwitcher = tk.Checkbutton(ControllerFrame, text="Keys|Action", variable=KeyOrAction, command=lambda:ControllerUIUpdater())
+        ControllerKeyActionSwitcher.grid(row=0, column=1, sticky="ew", padx=2)
+
+        ControllerMidiInputButton = tk.Button(ControllerFrame,text=("Set Midi"if Controller["MidiInputs"][Page-1] is None else str(Controller["MidiInputs"][Page-1])),command=lambda: DetectNote(ControllerMidiInputButton,Row["Device"],Controller,"MidiInputs",Page),width=9)
+        ControllerMidiInputButton.grid(row=0, column=2)
+
+        SwitcherDivider = tk.Frame(ControllerFrame,width=2,bg="#555")
+        SwitcherDivider.grid(row=0,column=3,sticky="news",padx=5)
 
         #--- Key
 
-        ControllerKeyOutputButton = tk.Button(ControllerFrame,text="+".join(Controller.get("KeyOutput")) or "Set Key",command=lambda: DetectKey(ControllerKeyOutputButton,Controller, "KeyOutput"), width=22)
-        ControllerKeyOutputButton.grid(row=0, column=2, sticky="ew")
+        ControllerKeyOutputButton = tk.Button(ControllerFrame,text=("+".join(Controller["KeyOutputs"][Page-1])or "Set Key"),command=lambda: DetectKey(ControllerKeyOutputButton,Controller,'KeyOutputs',Page-1),width=9)
+        ControllerKeyOutputButton.grid(row=0, column=4, sticky="ew")
 
-        ControllerWindowSpecificSwitcher = tk.Checkbutton(ControllerFrame, text="All|Window", variable=WindowSpecific, command=lambda:WindowSpecificUpdater())
-        ControllerWindowSpecificSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
+        ControllerWindowSpecificSwitcher = tk.Checkbutton(ControllerFrame, text="All|Window", variable=WindowSpecific, command=lambda:ControllerUIUpdater())
+        ControllerWindowSpecificSwitcher.grid(row=0, column=5, sticky="ew", padx=2)
 
         ControllerWindowSpecifiWindowShow = tk.Entry(ControllerFrame, textvariable=WindowDisplayName, state="readonly")
-        ControllerWindowSpecifiWindowShow.grid(row=0, column=4, sticky="ew")
+        ControllerWindowSpecifiWindowShow.grid(row=0, column=6, sticky="ew")
         ControllerWindowSpecifiWindowShow.grid_forget()
 
         ControllerWindowSpecificChooseWindowButton = tk.Button(ControllerFrame, command=lambda: SearchForWindow(Controller, WindowDisplayName, "WindowClassName", "WindowDisplayName" ), text="Choose Window", width=14)
-        ControllerWindowSpecificChooseWindowButton.grid(row=0, column=5)
+        ControllerWindowSpecificChooseWindowButton.grid(row=0, column=7)
         ControllerWindowSpecificChooseWindowButton.grid_forget()
 
-        # --- Opener 
-        ControllerFileSwitcher = tk.Checkbutton(ControllerFrame, text="File|Custom", variable=FileOrCustom, command=lambda:FileOrCustomUpdater())
-        ControllerFileSwitcher.grid(row=0, column=3, sticky="ew", padx=2)
+        # ------ Opener 
+        ControllerFileSwitcher = tk.Checkbutton(ControllerFrame, text="File|Custom", variable=FileOrCustom, command=lambda:ControllerUIUpdater())
+        ControllerFileSwitcher.grid(row=0, column=4, sticky="ew", padx=2)
         ControllerFileSwitcher.grid_forget()
 
-        ControllerActionEntryShow = tk.Entry(ControllerFrame, textvariable=StartFilePath, state="readonly")
-        ControllerActionEntryShow.grid(row=0, column=4, sticky="ew")
-        ControllerActionEntryShow.grid_forget()
+        # ---- File
 
         ControllerChooseFile = tk.Button(ControllerFrame, command=lambda: SearchForAnyFile(Controller,StartFilePath,"StartFilePath"), text="Browse", width=8)
         ControllerChooseFile.grid(row=0, column=5)
         ControllerChooseFile.grid_forget()
 
-        ControllerCustomEntryShow = tk.Entry(ControllerFrame, textvariable=CustomCommand,)
-        ControllerCustomEntryShow.grid(row=0, column=4, sticky="ew")
-        ControllerCustomEntryShow.grid_forget()
-        CustomCommand.trace_add("write", UpdateCustomCommand)
+        ControllerActionEntryShow = tk.Entry(ControllerFrame, textvariable=StartFilePath, state="readonly")
+        ControllerActionEntryShow.grid(row=0, column=6, sticky="ew")
+        ControllerActionEntryShow.grid_forget()
+
+        # ---- Custom
 
         ControllerCustomRunButton= tk.Button(ControllerFrame, command=lambda: MidiCustomRun(Controller['CustomCommand']), text="Run", width=8)
         ControllerCustomRunButton.grid(row=0, column=5)
         ControllerCustomRunButton.grid_forget()
 
+        ControllerCustomEntryShow = tk.Entry(ControllerFrame, textvariable=CustomCommand,)
+        ControllerCustomEntryShow.grid(row=0, column=6, sticky="ew")
+        ControllerCustomEntryShow.grid_forget()
+        CustomCommand.trace_add("write", UpdateCustomCommand)
+
         #--- Always
 
         ControllerRemoveButton = tk.Button(ControllerFrame, command=lambda: RemoveController(Controller), text="Remove Controller", width=18)
-        ControllerRemoveButton.grid(row=0, column=6)
+        ControllerRemoveButton.grid(row=0, column=8)
 
         if Loading:
-            KeyOrActionUpdater()
+            OnControllerPageChange()
             return
 
     # --------------- Drums
